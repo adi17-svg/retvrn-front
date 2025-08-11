@@ -1,0 +1,129 @@
+# name: ret
+# description: "A new Flutter project."
+# publish_to: "none" # this prevents publishing to pub.dev
+
+# version: 1.0.0+1
+
+# environment:
+#   sdk: ">=3.7.0 <4.0.0"
+
+# dependencies:
+#   flutter:
+#     sdk: flutter
+
+#   # Firebase
+#   firebase_core: ^3.14.0
+#   firebase_auth: ^5.6.0
+#   cloud_firestore: ^5.6.7
+#   google_sign_in: ^6.2.1
+
+#   # Voice & Permissions
+#   flutter_sound: ^9.2.13+1
+#   # speech_to_text: ^6.5.2
+#   permission_handler: ^11.3.1
+#   path_provider: ^2.1.2
+#   path: ^1.9.0
+#   record: ^6.0.0
+#   # flutter_audio_recorder: ^0.5.5
+
+#   # Networking
+#   http: ^1.2.1
+#   http_parser: ^4.0.2
+#   url_launcher: ^6.1.10
+
+#   # UI & Visualization
+#   cupertino_icons: ^1.0.8
+#   fl_chart: ^1.0.0
+#   intl: ^0.18.1
+#   g: ^0.0.1
+
+#   # Audio Playback
+#   just_audio: ^0.9.35
+#   audioplayers: ^5.2.1
+
+#   # App Info
+#   package_info_plus: ^8.3.0
+
+# dev_dependencies:
+#   flutter_test:
+#     sdk: flutter
+#   flutter_lints: ^3.0.1
+
+# flutter:
+#   uses-material-design: true
+
+#   assets:
+#     - assets/bg1.jpeg
+#     - assets/bg2.jpeg
+#     - assets/bg3.jpeg
+#     - assets/bg4.webp
+#     - assets/bg5.jpeg
+#     - assets/bg6.jpeg
+#     - assets/bg7.jpg
+#     - assets/bg8.jpeg
+name: ret
+description: "A new Flutter project."
+publish_to: "none" # this prevents publishing to pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.7.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase
+  firebase_core: ^3.14.0
+  firebase_auth: ^5.6.0
+  cloud_firestore: ^5.6.7
+  google_sign_in: ^6.2.1
+  firebase_messaging: ^15.2.10 # ✅ Updated to be compatible with firebase_core 3.x
+
+  # Voice & Permissions
+  flutter_sound: ^9.2.13+1
+  # speech_to_text: ^6.5.2
+  permission_handler: ^12.0.1
+  timezone: ^0.9.0
+  path_provider: ^2.1.2
+  path: ^1.9.0
+  record: ^6.0.0
+  # flutter_audio_recorder: ^0.5.5
+
+  # Networking
+  http: ^1.2.1
+  http_parser: ^4.0.2
+  url_launcher: ^6.1.10
+  flutter_local_notifications: ^17.2.0
+
+  # UI & Visualization
+  cupertino_icons: ^1.0.8
+  fl_chart: ^1.0.0
+  intl: ^0.18.1
+  g: ^0.0.1
+
+  # Audio Playback
+  just_audio: ^0.9.35
+  audioplayers: ^5.2.1
+
+  # App Info
+  package_info_plus: ^8.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/bg1.jpeg
+    - assets/bg2.jpeg
+    - assets/bg3.jpeg
+    - assets/bg4.webp
+    - assets/bg5.jpeg
+    - assets/bg6.jpeg
+    - assets/bg7.jpg
+    - assets/bg8.jpeg

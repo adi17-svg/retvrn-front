@@ -1,0 +1,1815 @@
+// import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:http/http.dart' as http;
+// import 'dart:convert';
+// import 'package:intl/intl.dart';
+// import 'package:flutter/foundation.dart';
+// import 'package:http_parser/http_parser.dart';
+// import 'reflect_audio_handler.dart';
+
+// class ReflectFirestoreHandler {
+//   final FirebaseFirestore firestore = FirebaseFirestore.instance;
+//   final ReflectAudioHandler audioHandler;
+//   List<Map<String, dynamic>> messages = [];
+//   String? lastStage;
+
+//   ReflectFirestoreHandler({required this.audioHandler});
+
+//   Future<void> initialize({required String userId}) async {
+//     await _loadMessages(userId);
+//     await _checkAndAddDailyTask(userId);
+//   }
+
+//   Future<void> _loadMessages(String userId) async {
+//     final snapshot =
+//         await firestore
+//             .collection('users')
+//             .doc(userId)
+//             .collection('mergedMessages')
+//             .orderBy('timestamp')
+//             .get();
+
+//     messages = snapshot.docs.map((doc) => doc.data()..['id'] = doc.id).toList();
+
+//     for (final msg in messages.reversed) {
+//       if (msg['type'] == 'spiral' && (msg['stage'] ?? '') != '') {
+//         lastStage = msg['stage'];
+//         break;
+//       }
+//     }
+//   }
+
+//   String getReplyToText(Map<String, dynamic> message) {
+//     return message['question'] ??
+//         message['response'] ??
+//         message['user'] ??
+//         message['message'] ??
+//         "";
+//   }
+
+//   Future<void> _checkAndAddDailyTask(String userId) async {
+//     final today = DateTime.now();
+//     final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+//     try {
+//       final querySnapshot =
+//           await firestore
+//               .collection('users')
+//               .doc(userId)
+//               .collection('mergedMessages')
+//               .where('type', isEqualTo: 'daily-task')
+//               .where(
+//                 'timestamp',
+//                 isGreaterThanOrEqualTo: DateTime(
+//                   today.year,
+//                   today.month,
+//                   today.day,
+//                 ),
+//               )
+//               .where(
+//                 'timestamp',
+//                 isLessThan: DateTime(today.year, today.month, today.day + 1),
+//               )
+//               .limit(1)
+//               .get();
+
+//       if (querySnapshot.docs.isEmpty) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error checking for daily task: $e');
+//       }
+//       final hasDailyTask = messages.any((msg) {
+//         if (msg['type'] == 'daily-task') {
+//           DateTime timestamp;
+//           if (msg['timestamp'] is Timestamp) {
+//             timestamp = (msg['timestamp'] as Timestamp).toDate();
+//           } else if (msg['timestamp'] is String) {
+//             timestamp = DateTime.parse(msg['timestamp']);
+//           } else {
+//             timestamp = msg['timestamp'];
+//           }
+//           return DateFormat('yyyy-MM-dd').format(timestamp) == todayStr;
+//         }
+//         return false;
+//       });
+
+//       if (!hasDailyTask) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     }
+//   }
+
+//   Future<void> _addDailyTaskMessage(String userId) async {
+//     try {
+//       final response = await http.get(
+//         Uri.parse('http://192.168.31.89:5000/daily_task?user_id=$userId'),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+//         final today = DateTime(now.year, now.month, now.day);
+
+//         final taskMessage = {
+//           'type': 'daily-task',
+//           'message': data['task'] ?? 'Your daily reflection task',
+//           'timestamp': today,
+//           'task_id': data['timestamp'],
+//           'completed': data['completed'] ?? false,
+//         };
+
+//         await _storeMessage(taskMessage);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error loading daily task: $e');
+//       }
+//     }
+//   }
+
+//   Future<void> _storeMessage(Map<String, dynamic> msg) async {
+//     final docRef = await firestore
+//         .collection('users')
+//         .doc(FirebaseAuth.instance.currentUser!.uid)
+//         .collection('mergedMessages')
+//         .add(msg);
+//     messages.add({...msg, 'id': docRef.id});
+//   }
+
+//   Future<void> sendEntry(
+//     String entry,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     if (entry.trim().isEmpty) return;
+
+//     final now = DateTime.now();
+//     final url = Uri.parse("http://192.168.31.89:5000/merged");
+
+//     try {
+//       final response = await http.post(
+//         url,
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "text": entry,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//           "is_spiral_reply":
+//               selectedMessage != null && selectedMessage['type'] == 'spiral',
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final base = {
+//           'user': entry,
+//           'timestamp': now,
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           final msg = {
+//             ...base,
+//             'type': 'chat',
+//             'response': data['response'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         } else if (data['mode'] == 'spiral') {
+//           final newStage = data['stage'] ?? '';
+//           lastStage = newStage;
+
+//           final msg = {
+//             ...base,
+//             'type': 'spiral',
+//             'stage': newStage,
+//             'question': data['question'] ?? '',
+//             'evolution': data['evolution'] ?? '',
+//             'growth': data['growth'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         }
+//         setState(() {});
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> processVoiceMessage(
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       final uri = Uri.parse("http://192.168.31.89:5000/reflect_transcription");
+//       final request = http.MultipartRequest('POST', uri);
+
+//       request.fields['last_stage'] = lastStage ?? '';
+//       request.fields['reply_to'] =
+//           selectedMessage != null ? getReplyToText(selectedMessage) : "";
+//       request.fields['is_spiral_reply'] =
+//           (selectedMessage != null && selectedMessage['type'] == 'spiral')
+//               .toString();
+
+//       final audioFile = await http.MultipartFile.fromPath(
+//         'audio',
+//         await audioHandler.getCurrentRecordingPath(),
+//         contentType: MediaType('audio', 'wav'),
+//       );
+//       request.files.add(audioFile);
+
+//       final response = await request.send();
+//       final responseBody = await response.stream.bytesToString();
+//       final data = json.decode(responseBody);
+
+//       if (response.statusCode == 200) {
+//         final now = DateTime.now();
+//         final msg = {
+//           'user': '[Voice]',
+//           'timestamp': now,
+//           'audioPath': await audioHandler.getCurrentRecordingPath(),
+//           'transcription': data['transcription'] ?? '',
+//           'type': data['mode'],
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//           'diarized': data['diarized'] ?? false,
+//           'speaker_stages': data['speaker_stages'] ?? {},
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           msg['response'] = data['response'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//         } else {
+//           msg['stage'] = data['stage'] ?? '';
+//           msg['question'] = data['question'] ?? '';
+//           msg['growth'] = data['growth'] ?? '';
+//           msg['evolution'] = data['evolution'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           lastStage = data['stage'];
+//         }
+
+//         await _storeMessage(msg);
+//         setState(() {});
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Voice processing failed: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+// // }
+// import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:http/http.dart' as http;
+// import 'dart:convert';
+// import 'package:intl/intl.dart';
+// import 'package:flutter/foundation.dart';
+// import 'package:http_parser/http_parser.dart';
+// import 'reflect_audio_handler.dart';
+
+// class ReflectFirestoreHandler {
+//   final FirebaseFirestore firestore = FirebaseFirestore.instance;
+//   final ReflectAudioHandler audioHandler;
+//   List<Map<String, dynamic>> messages = [];
+//   String? lastStage;
+
+//   ReflectFirestoreHandler({required this.audioHandler});
+
+//   Future<void> initialize({required String userId}) async {
+//     await _loadMessages(userId);
+//     await _checkAndAddDailyTask(userId);
+//   }
+
+//   Future<void> _loadMessages(String userId) async {
+//     final snapshot =
+//         await firestore
+//             .collection('users')
+//             .doc(userId)
+//             .collection('mergedMessages')
+//             .orderBy('timestamp')
+//             .get();
+
+//     messages = snapshot.docs.map((doc) => doc.data()..['id'] = doc.id).toList();
+
+//     for (final msg in messages.reversed) {
+//       if (msg['type'] == 'spiral' && (msg['stage'] ?? '') != '') {
+//         lastStage = msg['stage'];
+//         break;
+//       }
+//     }
+//   }
+
+//   String getReplyToText(Map<String, dynamic> message) {
+//     return message['question'] ??
+//         message['response'] ??
+//         message['user'] ??
+//         message['message'] ??
+//         "";
+//   }
+
+//   Future<void> _checkAndAddDailyTask(String userId) async {
+//     final today = DateTime.now();
+//     final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+//     try {
+//       final querySnapshot =
+//           await firestore
+//               .collection('users')
+//               .doc(userId)
+//               .collection('mergedMessages')
+//               .where('type', isEqualTo: 'daily-task')
+//               .where(
+//                 'timestamp',
+//                 isGreaterThanOrEqualTo: DateTime(
+//                   today.year,
+//                   today.month,
+//                   today.day,
+//                 ),
+//               )
+//               .where(
+//                 'timestamp',
+//                 isLessThan: DateTime(today.year, today.month, today.day + 1),
+//               )
+//               .limit(1)
+//               .get();
+
+//       if (querySnapshot.docs.isEmpty) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error checking for daily task: $e');
+//       }
+//       final hasDailyTask = messages.any((msg) {
+//         if (msg['type'] == 'daily-task') {
+//           DateTime timestamp;
+//           if (msg['timestamp'] is Timestamp) {
+//             timestamp = (msg['timestamp'] as Timestamp).toDate();
+//           } else if (msg['timestamp'] is String) {
+//             timestamp = DateTime.parse(msg['timestamp']);
+//           } else {
+//             timestamp = msg['timestamp'];
+//           }
+//           return DateFormat('yyyy-MM-dd').format(timestamp) == todayStr;
+//         }
+//         return false;
+//       });
+
+//       if (!hasDailyTask) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     }
+//   }
+
+//   Future<void> _addDailyTaskMessage(String userId) async {
+//     try {
+//       final response = await http.get(
+//         Uri.parse('http://192.168.31.94:5000/daily_task?user_id=$userId'),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+//         final today = DateTime(now.year, now.month, now.day);
+
+//         final taskMessage = {
+//           'type': 'daily-task',
+//           'message': data['task'] ?? 'Your daily reflection task',
+//           'timestamp': today,
+//           'task_id': data['timestamp'],
+//           'completed': data['completed'] ?? false,
+//         };
+
+//         await _storeMessage(taskMessage);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error loading daily task: $e');
+//       }
+//     }
+//   }
+
+//   Future<void> _storeMessage(Map<String, dynamic> msg) async {
+//     final docRef = await firestore
+//         .collection('users')
+//         .doc(FirebaseAuth.instance.currentUser!.uid)
+//         .collection('mergedMessages')
+//         .add(msg);
+//     messages.add({...msg, 'id': docRef.id});
+//   }
+
+//   Future<void> sendEntry(
+//     String entry,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     if (entry.trim().isEmpty) return;
+
+//     final now = DateTime.now();
+//     final url = Uri.parse("http://192.168.31.94:5000/merged");
+
+//     try {
+//       final response = await http.post(
+//         url,
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "text": entry,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//           "is_spiral_reply":
+//               selectedMessage != null && selectedMessage['type'] == 'spiral',
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final base = {
+//           'user': entry,
+//           'timestamp': now,
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           final msg = {
+//             ...base,
+//             'type': 'chat',
+//             'response': data['response'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         } else if (data['mode'] == 'spiral') {
+//           final newStage = data['stage'] ?? '';
+//           lastStage = newStage;
+
+//           final msg = {
+//             ...base,
+//             'type': 'spiral',
+//             'stage': newStage,
+//             'question': data['question'] ?? '',
+//             'evolution': data['evolution'] ?? '',
+//             'growth': data['growth'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         }
+//         setState(() {});
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> processVoiceMessage(
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       final uri = Uri.parse("http://192.168.31.94:5000/reflect_transcription");
+//       final request = http.MultipartRequest('POST', uri);
+
+//       request.fields['last_stage'] = lastStage ?? '';
+//       request.fields['reply_to'] =
+//           selectedMessage != null ? getReplyToText(selectedMessage) : "";
+//       request.fields['is_spiral_reply'] =
+//           (selectedMessage != null && selectedMessage['type'] == 'spiral')
+//               .toString();
+
+//       final audioFile = await http.MultipartFile.fromPath(
+//         'audio',
+//         await audioHandler.getCurrentRecordingPath(),
+//         contentType: MediaType('audio', 'wav'),
+//       );
+//       request.files.add(audioFile);
+
+//       final response = await request.send();
+//       final responseBody = await response.stream.bytesToString();
+//       final data = json.decode(responseBody);
+
+//       if (response.statusCode == 200) {
+//         final now = DateTime.now();
+//         final msg = {
+//           'user': '[Voice]',
+//           'timestamp': now,
+//           'audioPath': await audioHandler.getCurrentRecordingPath(),
+//           'transcription': data['transcription'] ?? '',
+//           'type': data['mode'],
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//           'diarized': data['diarized'] ?? false,
+//           'speaker_stages': data['speaker_stages'] ?? {},
+//           'ask_speaker_pick': data['ask_speaker_pick'] ?? false,
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           msg['response'] = data['response'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           await _storeMessage(msg);
+//           setState(() {});
+//         } else if (data['ask_speaker_pick'] == true) {
+//           // Store intermediate message and wait for speaker selection
+//           await _storeMessage(msg);
+//           setState(() {});
+//         } else {
+//           // Direct spiral response without speaker selection
+//           msg['stage'] = data['stage'] ?? '';
+//           msg['question'] = data['question'] ?? '';
+//           msg['growth'] = data['growth'] ?? '';
+//           msg['evolution'] = data['evolution'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           lastStage = data['stage'];
+//           await _storeMessage(msg);
+//           setState(() {});
+//         }
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Voice processing failed: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> finalizeSpeakerStage(
+//     String messageId,
+//     String speakerId,
+//     Map<String, dynamic> speakerStages,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       final url = Uri.parse("http://192.168.31.94:5000/finalize_stage");
+//       final response = await http.post(
+//         url,
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "speaker_id": speakerId,
+//           "speaker_stages": speakerStages,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+
+//         // Update the existing message with the finalized stage
+//         final messageIndex = messages.indexWhere(
+//           (msg) => msg['id'] == messageId,
+//         );
+//         if (messageIndex != -1) {
+//           messages[messageIndex] = {
+//             ...messages[messageIndex],
+//             'type': 'spiral',
+//             'stage': data['stage'],
+//             'question': data['question'],
+//             'growth': data['growth'],
+//             'evolution': data['evolution'],
+//             'audio_url': data['audio_url'],
+//             'ask_speaker_pick': false,
+//           };
+
+//           lastStage = data['stage'];
+
+//           // Update in Firestore
+//           await firestore
+//               .collection('users')
+//               .doc(FirebaseAuth.instance.currentUser!.uid)
+//               .collection('mergedMessages')
+//               .doc(messageId)
+//               .update({
+//                 'type': 'spiral',
+//                 'stage': data['stage'],
+//                 'question': data['question'],
+//                 'growth': data['growth'],
+//                 'evolution': data['evolution'],
+//                 'audio_url': data['audio_url'],
+//                 'ask_speaker_pick': false,
+//               });
+
+//           setState(() {});
+//         }
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error finalizing stage: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+// // }
+// import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:http/http.dart' as http;
+// import 'dart:convert';
+// import 'package:intl/intl.dart';
+// import 'package:flutter/foundation.dart';
+// import 'package:http_parser/http_parser.dart';
+// import 'reflect_audio_handler.dart';
+
+// class ReflectFirestoreHandler {
+//   final FirebaseFirestore firestore = FirebaseFirestore.instance;
+//   final ReflectAudioHandler audioHandler;
+//   List<Map<String, dynamic>> messages = [];
+//   String? lastStage;
+
+//   ReflectFirestoreHandler({required this.audioHandler});
+
+//   Future<void> initialize({required String userId}) async {
+//     await _loadMessages(userId);
+//     await _checkAndAddDailyTask(userId);
+//     _addDateHeaders();
+//   }
+
+//   Future<void> _loadMessages(String userId) async {
+//     final snapshot =
+//         await firestore
+//             .collection('users')
+//             .doc(userId)
+//             .collection('mergedMessages')
+//             .orderBy('timestamp')
+//             .get();
+
+//     messages = snapshot.docs.map((doc) => doc.data()..['id'] = doc.id).toList();
+
+//     for (final msg in messages.reversed) {
+//       if (msg['type'] == 'spiral' && (msg['stage'] ?? '') != '') {
+//         lastStage = msg['stage'];
+//         break;
+//       }
+//     }
+//   }
+
+//   void _addDateHeaders() {
+//     if (messages.isEmpty) return;
+
+//     // Group messages by date
+//     final Map<String, List<Map<String, dynamic>>> groupedMessages = {};
+//     for (final message in messages) {
+//       final date = DateFormat('yyyy-MM-dd').format(
+//         message['timestamp'] is Timestamp
+//             ? (message['timestamp'] as Timestamp).toDate()
+//             : DateTime.parse(message['timestamp']),
+//       );
+//       groupedMessages.putIfAbsent(date, () => []).add(message);
+//     }
+
+//     // Clear existing messages and add date headers
+//     final List<Map<String, dynamic>> newMessages = [];
+//     groupedMessages.forEach((date, msgs) {
+//       final firstMsg = msgs.first;
+//       final timestamp =
+//           firstMsg['timestamp'] is Timestamp
+//               ? (firstMsg['timestamp'] as Timestamp).toDate()
+//               : DateTime.parse(firstMsg['timestamp']);
+
+//       // Add date header
+//       newMessages.add({
+//         'type': 'date-header',
+//         'date': DateTime(timestamp.year, timestamp.month, timestamp.day),
+//       });
+
+//       // Add all messages for this date
+//       newMessages.addAll(msgs);
+//     });
+
+//     messages = newMessages;
+//   }
+
+//   String getReplyToText(Map<String, dynamic> message) {
+//     return message['question'] ??
+//         message['response'] ??
+//         message['user'] ??
+//         message['message'] ??
+//         "";
+//   }
+
+//   Future<void> _checkAndAddDailyTask(String userId) async {
+//     final today = DateTime.now();
+//     final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+//     try {
+//       final querySnapshot =
+//           await firestore
+//               .collection('users')
+//               .doc(userId)
+//               .collection('mergedMessages')
+//               .where('type', isEqualTo: 'daily-task')
+//               .where(
+//                 'timestamp',
+//                 isGreaterThanOrEqualTo: DateTime(
+//                   today.year,
+//                   today.month,
+//                   today.day,
+//                 ),
+//               )
+//               .where(
+//                 'timestamp',
+//                 isLessThan: DateTime(today.year, today.month, today.day + 1),
+//               )
+//               .limit(1)
+//               .get();
+
+//       if (querySnapshot.docs.isEmpty) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error checking for daily task: $e');
+//       }
+//       final hasDailyTask = messages.any((msg) {
+//         if (msg['type'] == 'daily-task') {
+//           DateTime timestamp;
+//           if (msg['timestamp'] is Timestamp) {
+//             timestamp = (msg['timestamp'] as Timestamp).toDate();
+//           } else if (msg['timestamp'] is String) {
+//             timestamp = DateTime.parse(msg['timestamp']);
+//           } else {
+//             timestamp = msg['timestamp'];
+//           }
+//           return DateFormat('yyyy-MM-dd').format(timestamp) == todayStr;
+//         }
+//         return false;
+//       });
+
+//       if (!hasDailyTask) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     }
+//   }
+
+//   Future<void> _addDailyTaskMessage(String userId) async {
+//     try {
+//       final response = await http.get(
+//         Uri.parse('http://192.168.31.94:5000/daily_task?user_id=$userId'),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+//         final today = DateTime(now.year, now.month, now.day);
+
+//         final taskMessage = {
+//           'type': 'daily-task',
+//           'message': data['task'] ?? 'Your daily reflection task',
+//           'timestamp': today,
+//           'task_id': data['timestamp'],
+//           'completed': data['completed'] ?? false,
+//         };
+
+//         await _storeMessage(taskMessage);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error loading daily task: $e');
+//       }
+//     }
+//   }
+
+//   Future<void> _storeMessage(Map<String, dynamic> msg) async {
+//     final docRef = await firestore
+//         .collection('users')
+//         .doc(FirebaseAuth.instance.currentUser!.uid)
+//         .collection('mergedMessages')
+//         .add(msg);
+//     messages.add({...msg, 'id': docRef.id});
+//   }
+
+//   Future<void> sendEntry(
+//     String entry,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     if (entry.trim().isEmpty) return;
+
+//     final now = DateTime.now();
+//     final url = Uri.parse("http://192.168.31.94:5000/merged");
+
+//     try {
+//       final response = await http.post(
+//         url,
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "text": entry,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//           "is_spiral_reply":
+//               selectedMessage != null && selectedMessage['type'] == 'spiral',
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final base = {
+//           'user': entry,
+//           'timestamp': now,
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           final msg = {
+//             ...base,
+//             'type': 'chat',
+//             'response': data['response'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         } else if (data['mode'] == 'spiral') {
+//           final newStage = data['stage'] ?? '';
+//           lastStage = newStage;
+
+//           final msg = {
+//             ...base,
+//             'type': 'spiral',
+//             'stage': newStage,
+//             'question': data['question'] ?? '',
+//             'evolution': data['evolution'] ?? '',
+//             'growth': data['growth'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         }
+//         setState(() {});
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> processVoiceMessage(
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       final uri = Uri.parse("http://192.168.31.94:5000/reflect_transcription");
+//       final request = http.MultipartRequest('POST', uri);
+
+//       request.fields['last_stage'] = lastStage ?? '';
+//       request.fields['reply_to'] =
+//           selectedMessage != null ? getReplyToText(selectedMessage) : "";
+//       request.fields['is_spiral_reply'] =
+//           (selectedMessage != null && selectedMessage['type'] == 'spiral')
+//               .toString();
+
+//       final audioFile = await http.MultipartFile.fromPath(
+//         'audio',
+//         await audioHandler.getCurrentRecordingPath(),
+//         contentType: MediaType('audio', 'wav'),
+//       );
+//       request.files.add(audioFile);
+
+//       final response = await request.send();
+//       final responseBody = await response.stream.bytesToString();
+//       final data = json.decode(responseBody);
+
+//       if (response.statusCode == 200) {
+//         final now = DateTime.now();
+//         final msg = {
+//           'user': '[Voice]',
+//           'timestamp': now,
+//           'audioPath': await audioHandler.getCurrentRecordingPath(),
+//           'transcription': data['transcription'] ?? '',
+//           'type': data['mode'],
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//           'diarized': data['diarized'] ?? false,
+//           'speaker_stages': data['speaker_stages'] ?? {},
+//           'ask_speaker_pick': data['ask_speaker_pick'] ?? false,
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           msg['response'] = data['response'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           await _storeMessage(msg);
+//           setState(() {});
+//         } else if (data['ask_speaker_pick'] == true) {
+//           // Store intermediate message and wait for speaker selection
+//           await _storeMessage(msg);
+//           setState(() {});
+//         } else {
+//           // Direct spiral response without speaker selection
+//           msg['stage'] = data['stage'] ?? '';
+//           msg['question'] = data['question'] ?? '';
+//           msg['growth'] = data['growth'] ?? '';
+//           msg['evolution'] = data['evolution'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           lastStage = data['stage'];
+//           await _storeMessage(msg);
+//           setState(() {});
+//         }
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Voice processing failed: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> finalizeSpeakerStage(
+//     String messageId,
+//     String speakerId,
+//     Map<String, dynamic> speakerStages,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       final url = Uri.parse("http://192.168.31.94:5000/finalize_stage");
+//       final response = await http.post(
+//         url,
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "speaker_id": speakerId,
+//           "speaker_stages": speakerStages,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+
+//         // Update the existing message with the finalized stage
+//         final messageIndex = messages.indexWhere(
+//           (msg) => msg['id'] == messageId,
+//         );
+//         if (messageIndex != -1) {
+//           messages[messageIndex] = {
+//             ...messages[messageIndex],
+//             'type': 'spiral',
+//             'stage': data['stage'],
+//             'question': data['question'],
+//             'growth': data['growth'],
+//             'evolution': data['evolution'],
+//             'audio_url': data['audio_url'],
+//             'ask_speaker_pick': false,
+//           };
+
+//           lastStage = data['stage'];
+
+//           // Update in Firestore
+//           await firestore
+//               .collection('users')
+//               .doc(FirebaseAuth.instance.currentUser!.uid)
+//               .collection('mergedMessages')
+//               .doc(messageId)
+//               .update({
+//                 'type': 'spiral',
+//                 'stage': data['stage'],
+//                 'question': data['question'],
+//                 'growth': data['growth'],
+//                 'evolution': data['evolution'],
+//                 'audio_url': data['audio_url'],
+//                 'ask_speaker_pick': false,
+//               });
+
+//           setState(() {});
+//         }
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error finalizing stage: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+// // }
+// import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'package:http/http.dart' as http;
+// import 'dart:convert';
+// import 'package:intl/intl.dart';
+// import 'package:flutter/foundation.dart';
+// import 'package:http_parser/http_parser.dart';
+// import 'reflect_audio_handler.dart';
+
+// class ReflectFirestoreHandler {
+//   final FirebaseFirestore firestore = FirebaseFirestore.instance;
+//   final ReflectAudioHandler audioHandler;
+//   List<Map<String, dynamic>> messages = [];
+//   String? lastStage;
+
+//   ReflectFirestoreHandler({required this.audioHandler});
+
+//   Future<void> initialize({required String userId}) async {
+//     await _loadMessages(userId);
+//     await _checkAndAddDailyTask(userId);
+//     _addDateHeaders();
+//   }
+
+//   Future<void> _loadMessages(String userId) async {
+//     final snapshot =
+//         await firestore
+//             .collection('users')
+//             .doc(userId)
+//             .collection('mergedMessages')
+//             .orderBy('timestamp')
+//             .get();
+
+//     messages = snapshot.docs.map((doc) => doc.data()..['id'] = doc.id).toList();
+
+//     for (final msg in messages.reversed) {
+//       if (msg['type'] == 'spiral' && (msg['stage'] ?? '') != '') {
+//         lastStage = msg['stage'];
+//         break;
+//       }
+//     }
+//   }
+
+//   void _addDateHeaders() {
+//     if (messages.isEmpty) return;
+
+//     final Map<String, List<Map<String, dynamic>>> groupedMessages = {};
+//     for (final message in messages) {
+//       final date = DateFormat('yyyy-MM-dd').format(
+//         message['timestamp'] is Timestamp
+//             ? (message['timestamp'] as Timestamp).toDate()
+//             : DateTime.parse(message['timestamp']),
+//       );
+//       groupedMessages.putIfAbsent(date, () => []).add(message);
+//     }
+
+//     final List<Map<String, dynamic>> newMessages = [];
+//     groupedMessages.forEach((date, msgs) {
+//       final firstMsg = msgs.first;
+//       final timestamp =
+//           firstMsg['timestamp'] is Timestamp
+//               ? (firstMsg['timestamp'] as Timestamp).toDate()
+//               : DateTime.parse(firstMsg['timestamp']);
+
+//       newMessages.add({
+//         'type': 'date-header',
+//         'date': DateTime(timestamp.year, timestamp.month, timestamp.day),
+//       });
+
+//       newMessages.addAll(msgs);
+//     });
+
+//     messages = newMessages;
+//   }
+
+//   String getReplyToText(Map<String, dynamic> message) {
+//     return message['question'] ??
+//         message['response'] ??
+//         message['user'] ??
+//         message['message'] ??
+//         "";
+//   }
+
+//   Future<void> _checkAndAddDailyTask(String userId) async {
+//     final today = DateTime.now();
+//     final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+//     try {
+//       final querySnapshot =
+//           await firestore
+//               .collection('users')
+//               .doc(userId)
+//               .collection('mergedMessages')
+//               .where('type', isEqualTo: 'daily-task')
+//               .where(
+//                 'timestamp',
+//                 isGreaterThanOrEqualTo: DateTime(
+//                   today.year,
+//                   today.month,
+//                   today.day,
+//                 ),
+//               )
+//               .where(
+//                 'timestamp',
+//                 isLessThan: DateTime(today.year, today.month, today.day + 1),
+//               )
+//               .limit(1)
+//               .get();
+
+//       if (querySnapshot.docs.isEmpty) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error checking for daily task: $e');
+//       }
+//       final hasDailyTask = messages.any((msg) {
+//         if (msg['type'] == 'daily-task') {
+//           DateTime timestamp;
+//           if (msg['timestamp'] is Timestamp) {
+//             timestamp = (msg['timestamp'] as Timestamp).toDate();
+//           } else if (msg['timestamp'] is String) {
+//             timestamp = DateTime.parse(msg['timestamp']);
+//           } else {
+//             timestamp = msg['timestamp'];
+//           }
+//           return DateFormat('yyyy-MM-dd').format(timestamp) == todayStr;
+//         }
+//         return false;
+//       });
+
+//       if (!hasDailyTask) {
+//         await _addDailyTaskMessage(userId);
+//       }
+//     }
+//   }
+
+//   Future<void> _addDailyTaskMessage(String userId) async {
+//     try {
+//       final response = await http.get(
+//         Uri.parse('http://192.168.31.94:5000/daily_task?user_id=$userId'),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+//         final today = DateTime(now.year, now.month, now.day);
+
+//         final taskMessage = {
+//           'type': 'daily-task',
+//           'message': data['task'] ?? 'Your daily reflection task',
+//           'timestamp': today,
+//           'task_id': data['timestamp'],
+//           'completed': data['completed'] ?? false,
+//         };
+
+//         await _storeMessage(taskMessage);
+//       }
+//     } catch (e) {
+//       if (kDebugMode) {
+//         print('Error loading daily task: $e');
+//       }
+//     }
+//   }
+
+//   Future<void> _storeMessage(Map<String, dynamic> msg) async {
+//     final docRef = await firestore
+//         .collection('users')
+//         .doc(FirebaseAuth.instance.currentUser!.uid)
+//         .collection('mergedMessages')
+//         .add(msg);
+//     messages.add({...msg, 'id': docRef.id});
+//   }
+
+//   Future<void> sendEntry(
+//     String entry,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     if (entry.trim().isEmpty) return;
+
+//     final now = DateTime.now();
+//     const url = "http://192.168.31.94:5000/merged";
+
+//     try {
+//       final response = await http.post(
+//         Uri.parse(url),
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "text": entry,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//           "is_spiral_reply":
+//               selectedMessage != null && selectedMessage['type'] == 'spiral',
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final base = {
+//           'user': entry,
+//           'timestamp': now,
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           final msg = {
+//             ...base,
+//             'type': 'chat',
+//             'response': data['response'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         } else if (data['mode'] == 'spiral') {
+//           final newStage = data['stage'] ?? '';
+//           lastStage = newStage;
+
+//           final msg = {
+//             ...base,
+//             'type': 'spiral',
+//             'stage': newStage,
+//             'question': data['question'] ?? '',
+//             'evolution': data['evolution'] ?? '',
+//             'growth': data['gamified']?['gamified_prompt'] ?? '',
+//             'audio_url': data['audio_url'] ?? '',
+//           };
+//           await _storeMessage(msg);
+//         }
+//         setState(() {});
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> processVoiceMessage(
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       const uri = "http://192.168.31.94:5000/reflect_transcription";
+//       final request = http.MultipartRequest('POST', Uri.parse(uri));
+
+//       request.fields['last_stage'] = lastStage ?? '';
+//       request.fields['reply_to'] =
+//           selectedMessage != null ? getReplyToText(selectedMessage) : "";
+//       request.fields['is_spiral_reply'] =
+//           (selectedMessage != null && selectedMessage['type'] == 'spiral')
+//               .toString();
+
+//       final audioFile = await http.MultipartFile.fromPath(
+//         'audio',
+//         await audioHandler.getCurrentRecordingPath(),
+//         contentType: MediaType('audio', 'wav'),
+//       );
+//       request.files.add(audioFile);
+
+//       final response = await request.send();
+//       final responseBody = await response.stream.bytesToString();
+//       final data = json.decode(responseBody);
+
+//       if (response.statusCode == 200) {
+//         final now = DateTime.now();
+//         final msg = {
+//           'user': '[Voice]',
+//           'timestamp': now,
+//           'audioPath': await audioHandler.getCurrentRecordingPath(),
+//           'transcription': data['transcription'] ?? '',
+//           'type': data['mode'],
+//           if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+//           if (selectedMessage != null)
+//             'reply_to': getReplyToText(selectedMessage),
+//           'diarized': data['diarized'] ?? false,
+//           'speaker_stages': data['speaker_stages'] ?? {},
+//           'ask_speaker_pick': data['ask_speaker_pick'] ?? false,
+//         };
+
+//         if (data['mode'] == 'chat') {
+//           msg['response'] = data['response'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           await _storeMessage(msg);
+//           setState(() {});
+//         } else if (data['ask_speaker_pick'] == true) {
+//           await _storeMessage(msg);
+//           setState(() {});
+//         } else {
+//           msg['stage'] = data['stage'] ?? '';
+//           msg['question'] = data['question'] ?? '';
+//           msg['growth'] = data['gamified']?['gamified_prompt'] ?? '';
+//           msg['evolution'] = data['evolution'] ?? '';
+//           msg['audio_url'] = data['audio_url'] ?? '';
+//           lastStage = data['stage'];
+//           await _storeMessage(msg);
+//           setState(() {});
+//         }
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Voice processing failed: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+
+//   Future<void> finalizeSpeakerStage(
+//     String messageId,
+//     String speakerId,
+//     Map<String, dynamic> speakerStages,
+//     Map<String, dynamic>? selectedMessage,
+//     void Function(void Function()) setState,
+//   ) async {
+//     try {
+//       const url = "http://192.168.31.94:5000/finalize_stage";
+//       final response = await http.post(
+//         Uri.parse(url),
+//         headers: {"Content-Type": "application/json"},
+//         body: jsonEncode({
+//           "speaker_id": speakerId,
+//           "speaker_stages": speakerStages,
+//           "last_stage": lastStage ?? "",
+//           "reply_to":
+//               selectedMessage != null ? getReplyToText(selectedMessage) : "",
+//         }),
+//       );
+
+//       if (response.statusCode == 200) {
+//         final data = jsonDecode(response.body);
+//         final now = DateTime.now();
+
+//         final messageIndex = messages.indexWhere(
+//           (msg) => msg['id'] == messageId,
+//         );
+//         if (messageIndex != -1) {
+//           messages[messageIndex] = {
+//             ...messages[messageIndex],
+//             'type': 'spiral',
+//             'stage': data['stage'],
+//             'question': data['question'],
+//             'growth': data['gamified']?['gamified_prompt'] ?? '',
+//             'evolution': data['evolution'],
+//             'audio_url': data['audio_url'],
+//             'ask_speaker_pick': false,
+//           };
+
+//           lastStage = data['stage'];
+
+//           await firestore
+//               .collection('users')
+//               .doc(FirebaseAuth.instance.currentUser!.uid)
+//               .collection('mergedMessages')
+//               .doc(messageId)
+//               .update({
+//                 'type': 'spiral',
+//                 'stage': data['stage'],
+//                 'question': data['question'],
+//                 'growth': data['gamified']?['gamified_prompt'] ?? '',
+//                 'evolution': data['evolution'],
+//                 'audio_url': data['audio_url'],
+//                 'ask_speaker_pick': false,
+//               });
+
+//           setState(() {});
+//         }
+//       }
+//     } catch (e) {
+//       messages.add({
+//         'type': 'error',
+//         'message': 'Error finalizing stage: ${e.toString()}',
+//         'timestamp': DateTime.now(),
+//       });
+//       setState(() {});
+//     }
+//   }
+// // // }
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http_parser/http_parser.dart';
+import 'reflect_audio_handler.dart';
+
+class ReflectFirestoreHandler {
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
+  final ReflectAudioHandler audioHandler;
+  List<Map<String, dynamic>> messages = [];
+  String? lastStage;
+
+  ReflectFirestoreHandler({required this.audioHandler});
+
+  Future<void> initialize({required String userId}) async {
+    await _loadMessages(userId);
+    await _checkAndAddDailyTask(userId);
+    _addDateHeaders();
+  }
+
+  Future<void> _loadMessages(String userId) async {
+    final snapshot =
+        await firestore
+            .collection('users')
+            .doc(userId)
+            .collection('mergedMessages')
+            .orderBy('timestamp')
+            .get();
+
+    messages = snapshot.docs.map((doc) => doc.data()..['id'] = doc.id).toList();
+
+    for (final msg in messages.reversed) {
+      if (msg['type'] == 'spiral' && (msg['stage'] ?? '') != '') {
+        lastStage = msg['stage'];
+        break;
+      }
+    }
+  }
+
+  void _addDateHeaders() {
+    if (messages.isEmpty) return;
+
+    final Map<String, List<Map<String, dynamic>>> groupedMessages = {};
+    for (final message in messages) {
+      final date = DateFormat('yyyy-MM-dd').format(
+        message['timestamp'] is Timestamp
+            ? (message['timestamp'] as Timestamp).toDate()
+            : DateTime.parse(message['timestamp']),
+      );
+      groupedMessages.putIfAbsent(date, () => []).add(message);
+    }
+
+    final List<Map<String, dynamic>> newMessages = [];
+    groupedMessages.forEach((date, msgs) {
+      final firstMsg = msgs.first;
+      final timestamp =
+          firstMsg['timestamp'] is Timestamp
+              ? (firstMsg['timestamp'] as Timestamp).toDate()
+              : DateTime.parse(firstMsg['timestamp']);
+
+      newMessages.add({
+        'type': 'date-header',
+        'date': DateTime(timestamp.year, timestamp.month, timestamp.day),
+      });
+
+      newMessages.addAll(msgs);
+    });
+
+    messages = newMessages;
+  }
+
+  String getReplyToText(Map<String, dynamic> message) {
+    return message['question'] ??
+        message['response'] ??
+        message['user'] ??
+        message['message'] ??
+        "";
+  }
+
+  Future<void> _checkAndAddDailyTask(String userId) async {
+    final today = DateTime.now();
+    final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+    try {
+      final querySnapshot =
+          await firestore
+              .collection('users')
+              .doc(userId)
+              .collection('mergedMessages')
+              .where('type', isEqualTo: 'daily-task')
+              .where(
+                'timestamp',
+                isGreaterThanOrEqualTo: DateTime(
+                  today.year,
+                  today.month,
+                  today.day,
+                ),
+              )
+              .where(
+                'timestamp',
+                isLessThan: DateTime(today.year, today.month, today.day + 1),
+              )
+              .limit(1)
+              .get();
+
+      if (querySnapshot.docs.isEmpty) {
+        await _addDailyTaskMessage(userId);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error checking for daily task: $e');
+      }
+      final hasDailyTask = messages.any((msg) {
+        if (msg['type'] == 'daily-task') {
+          DateTime timestamp;
+          if (msg['timestamp'] is Timestamp) {
+            timestamp = (msg['timestamp'] as Timestamp).toDate();
+          } else if (msg['timestamp'] is String) {
+            timestamp = DateTime.parse(msg['timestamp']);
+          } else {
+            timestamp = msg['timestamp'];
+          }
+          return DateFormat('yyyy-MM-dd').format(timestamp) == todayStr;
+        }
+        return false;
+      });
+
+      if (!hasDailyTask) {
+        await _addDailyTaskMessage(userId);
+      }
+    }
+  }
+
+  // old useful code
+  Future<void> _addDailyTaskMessage(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://192.168.31.94:5000/daily_task?user_id=$userId'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+
+        final taskMessage = {
+          'type': 'daily-task',
+          'message': data['task'] ?? 'Your daily reflection task',
+          'timestamp': today,
+          'task_id': data['timestamp'],
+          'completed': data['completed'] ?? false,
+        };
+
+        await _storeMessage(taskMessage);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error loading daily task: $e');
+      }
+    }
+  }
+
+  Future<void> _storeMessage(Map<String, dynamic> msg) async {
+    final docRef = await firestore
+        .collection('users')
+        .doc(FirebaseAuth.instance.currentUser!.uid)
+        .collection('mergedMessages')
+        .add(msg);
+    messages.add({...msg, 'id': docRef.id});
+  }
+
+  Future<void> sendEntry(
+    String entry,
+    Map<String, dynamic>? selectedMessage,
+    void Function(void Function()) setState,
+  ) async {
+    if (entry.trim().isEmpty) return;
+
+    final now = DateTime.now();
+    const url = "http://192.168.31.94:5000/merged";
+
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "text": entry,
+          "last_stage": lastStage ?? "",
+          "reply_to":
+              selectedMessage != null ? getReplyToText(selectedMessage) : "",
+          "is_spiral_reply":
+              selectedMessage != null && selectedMessage['type'] == 'spiral',
+          "user_id": FirebaseAuth.instance.currentUser!.uid,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final base = {
+          'user': entry,
+          'timestamp': now,
+          if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+          if (selectedMessage != null)
+            'reply_to': getReplyToText(selectedMessage),
+        };
+
+        if (data['mode'] == 'chat') {
+          final msg = {
+            ...base,
+            'type': 'chat',
+            'response': data['response'] ?? '',
+            'audio_url': data['audio_url'] ?? '',
+            if (data['streak'] != null) 'streak': data['streak'],
+            if (data['rewards'] != null) 'rewards': data['rewards'],
+            if (data['message_rewards'] != null)
+              'message_rewards': data['message_rewards'],
+          };
+          await _storeMessage(msg);
+        } else if (data['mode'] == 'spiral') {
+          final newStage = data['stage'] ?? '';
+          lastStage = newStage;
+
+          final msg = {
+            ...base,
+            'type': 'spiral',
+            'stage': newStage,
+            'question': data['question'] ?? '',
+            'evolution': data['evolution'] ?? '',
+            'growth': data['gamified']?['gamified_prompt'] ?? '',
+            'audio_url': data['audio_url'] ?? '',
+            'confidence': data['confidence'] ?? 0,
+            'reason': data['reason'] ?? '',
+            if (data['xp_gained'] != null) 'xp_gained': data['xp_gained'],
+            if (data['badges_earned'] != null)
+              'badges_earned': data['badges_earned'],
+            if (data['streak'] != null) 'streak': data['streak'],
+            if (data['streak_rewards'] != null)
+              'streak_rewards': data['streak_rewards'],
+            if (data['message_rewards'] != null)
+              'message_rewards': data['message_rewards'],
+            if (data['note'] != null) 'note': data['note'],
+          };
+          await _storeMessage(msg);
+        }
+        setState(() {});
+      }
+    } catch (e) {
+      messages.add({
+        'type': 'error',
+        'message': 'Error: ${e.toString()}',
+        'timestamp': DateTime.now(),
+      });
+      setState(() {});
+    }
+  }
+
+  Future<void> processVoiceMessage(
+    Map<String, dynamic>? selectedMessage,
+    void Function(void Function()) setState,
+  ) async {
+    try {
+      const uri = "http://192.168.31.94:5000/reflect_transcription";
+      final request = http.MultipartRequest('POST', Uri.parse(uri));
+
+      request.fields['last_stage'] = lastStage ?? '';
+      request.fields['reply_to'] =
+          selectedMessage != null ? getReplyToText(selectedMessage) : "";
+      request.fields['is_spiral_reply'] =
+          (selectedMessage != null && selectedMessage['type'] == 'spiral')
+              .toString();
+      request.fields['user_id'] = FirebaseAuth.instance.currentUser!.uid;
+
+      final audioFile = await http.MultipartFile.fromPath(
+        'audio',
+        await audioHandler.getCurrentRecordingPath(),
+        contentType: MediaType('audio', 'wav'),
+      );
+      request.files.add(audioFile);
+
+      final response = await request.send();
+      final responseBody = await response.stream.bytesToString();
+      final data = json.decode(responseBody);
+
+      if (response.statusCode == 200) {
+        final now = DateTime.now();
+        final msg = {
+          'user': '[Voice]',
+          'timestamp': now,
+          'audioPath': await audioHandler.getCurrentRecordingPath(),
+          'transcription': data['transcription'] ?? '',
+          'type': data['mode'],
+          if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+          if (selectedMessage != null)
+            'reply_to': getReplyToText(selectedMessage),
+          'diarized': data['diarized'] ?? false,
+          'speaker_stages': data['speaker_stages'] ?? {},
+          'ask_speaker_pick': data['ask_speaker_pick'] ?? false,
+          if (data['streak'] != null) 'streak': data['streak'],
+          if (data['rewards'] != null) 'rewards': data['rewards'],
+          if (data['message_rewards'] != null)
+            'message_rewards': data['message_rewards'],
+        };
+
+        if (data['mode'] == 'chat') {
+          msg['response'] = data['response'] ?? '';
+          msg['audio_url'] = data['audio_url'] ?? '';
+          await _storeMessage(msg);
+          setState(() {});
+        } else if (data['ask_speaker_pick'] == true) {
+          await _storeMessage(msg);
+          setState(() {});
+        } else {
+          msg['stage'] = data['stage'] ?? '';
+          msg['question'] = data['question'] ?? '';
+          msg['growth'] = data['gamified']?['gamified_prompt'] ?? '';
+          msg['evolution'] = data['evolution'] ?? '';
+          msg['audio_url'] = data['audio_url'] ?? '';
+          lastStage = data['stage'];
+          await _storeMessage(msg);
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      messages.add({
+        'type': 'error',
+        'message': 'Voice processing failed: ${e.toString()}',
+        'timestamp': DateTime.now(),
+      });
+      setState(() {});
+    }
+  }
+
+  Future<void> finalizeSpeakerStage(
+    String messageId,
+    String speakerId,
+    Map<String, dynamic> speakerStages,
+    Map<String, dynamic>? selectedMessage,
+    void Function(void Function()) setState,
+  ) async {
+    try {
+      const url = "http://192.168.31.94:5000/finalize_stage";
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "speaker_id": speakerId,
+          "speaker_stages": speakerStages,
+          "last_stage": lastStage ?? "",
+          "reply_to":
+              selectedMessage != null ? getReplyToText(selectedMessage) : "",
+          "user_id": FirebaseAuth.instance.currentUser!.uid,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final now = DateTime.now();
+
+        final messageIndex = messages.indexWhere(
+          (msg) => msg['id'] == messageId,
+        );
+        if (messageIndex != -1) {
+          messages[messageIndex] = {
+            ...messages[messageIndex],
+            'type': 'spiral',
+            'stage': data['stage'],
+            'question': data['question'],
+            'growth': data['gamified']?['gamified_prompt'] ?? '',
+            'evolution': data['evolution'],
+            'audio_url': data['audio_url'],
+            'ask_speaker_pick': false,
+            if (data['xp_gained'] != null) 'xp_gained': data['xp_gained'],
+            if (data['badges_earned'] != null)
+              'badges_earned': data['badges_earned'],
+          };
+
+          lastStage = data['stage'];
+
+          await firestore
+              .collection('users')
+              .doc(FirebaseAuth.instance.currentUser!.uid)
+              .collection('mergedMessages')
+              .doc(messageId)
+              .update({
+                'type': 'spiral',
+                'stage': data['stage'],
+                'question': data['question'],
+                'growth': data['gamified']?['gamified_prompt'] ?? '',
+                'evolution': data['evolution'],
+                'audio_url': data['audio_url'],
+                'ask_speaker_pick': false,
+                if (data['xp_gained'] != null) 'xp_gained': data['xp_gained'],
+                if (data['badges_earned'] != null)
+                  'badges_earned': data['badges_earned'],
+              });
+
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      messages.add({
+        'type': 'error',
+        'message': 'Error finalizing stage: ${e.toString()}',
+        'timestamp': DateTime.now(),
+      });
+      setState(() {});
+    }
+  }
+}

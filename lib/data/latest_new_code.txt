@@ -1,0 +1,2026 @@
+merged_reflect_screen.dart(frontend/lib/screens):
+
+
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../components/reflect/reflect_audio_handler.dart';
+import '../components/reflect/reflect_firestore_handler.dart';
+import '../components/reflect/reflect_message_builder.dart';
+import 'spiral_evolution_chart.dart';
+
+class MergedReflectScreen extends StatefulWidget {
+  const MergedReflectScreen({super.key});
+
+  @override
+  State<MergedReflectScreen> createState() => _MergedReflectScreenState();
+}
+
+class _MergedReflectScreenState extends State<MergedReflectScreen> {
+  final ReflectAudioHandler _audioHandler = ReflectAudioHandler();
+  late ReflectFirestoreHandler _firestoreHandler;
+  final ReflectMessageBuilder _messageBuilder = ReflectMessageBuilder();
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+
+  bool _isInitializing = true;
+  bool _isSelecting = false;
+  bool _isProcessing = false;
+  List<String> selectedMessageIds = [];
+  Map<String, dynamic>? selectedMessage;
+  String? _voiceMessageIdForSpeakerSelection;
+  Map<String, dynamic>? _pendingMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _firestoreHandler = ReflectFirestoreHandler(audioHandler: _audioHandler);
+    _initializeData();
+    _audioHandler.init(
+      onPlayerStateChanged: () {
+        setState(() {});
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _controller.dispose();
+    _audioHandler.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeData() async {
+    setState(() => _isInitializing = true);
+    await _firestoreHandler.initialize(
+      userId: FirebaseAuth.instance.currentUser!.uid,
+    );
+    setState(() => _isInitializing = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollToBottom(animated: false);
+      }
+    });
+  }
+
+  void _scrollToBottom({bool animated = true}) {
+    if (_scrollController.hasClients) {
+      if (animated) {
+        _scrollController.animateTo(
+          0, // Scroll to top since we're showing newest first
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      } else {
+        _scrollController.jumpTo(0); // Jump to top for initial load
+      }
+    }
+  }
+
+  void _toggleMessageSelection(String messageId) {
+    setState(() {
+      if (selectedMessageIds.contains(messageId)) {
+        selectedMessageIds.remove(messageId);
+      } else {
+        selectedMessageIds.add(messageId);
+      }
+      _isSelecting = selectedMessageIds.isNotEmpty;
+    });
+  }
+
+  void _cancelSelection() {
+    setState(() {
+      selectedMessageIds.clear();
+      _isSelecting = false;
+      selectedMessage = null;
+    });
+  }
+
+  void _setReplyToMessage(Map<String, dynamic> message) {
+    setState(() {
+      selectedMessage = message;
+      selectedMessageIds.clear();
+      _isSelecting = false;
+    });
+  }
+
+  Future<void> _showSpeakerSelectionDialog(
+    String messageId,
+    Map<String, dynamic> speakerStages,
+  ) async {
+    final speakers = speakerStages.keys.toList();
+    String? selectedSpeaker;
+
+    await showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder: (context, setState) {
+              return AlertDialog(
+                title: const Text('Select Your Voice'),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children:
+                        speakers.map((speaker) {
+                          final stage =
+                              speakerStages[speaker]['stage'] ?? 'Unknown';
+                          final text = speakerStages[speaker]['text'] ?? '';
+                          return Card(
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            child: RadioListTile<String>(
+                              title: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    speaker,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Stage: $stage',
+                                    style: TextStyle(color: Colors.grey[600]),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    text,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                              value: speaker,
+                              groupValue: selectedSpeaker,
+                              onChanged: (value) {
+                                setState(() {
+                                  selectedSpeaker = value;
+                                });
+                              },
+                            ),
+                          );
+                        }).toList(),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      if (selectedSpeaker != null) {
+                        Navigator.pop(context, selectedSpeaker);
+                      }
+                    },
+                    child: const Text('Confirm'),
+                  ),
+                ],
+              );
+            },
+          ),
+    ).then((selected) async {
+      if (selected != null && selected is String) {
+        setState(() => _isProcessing = true);
+        await _firestoreHandler.finalizeSpeakerStage(
+          messageId,
+          selected,
+          speakerStages,
+          selectedMessage,
+          setState,
+        );
+        setState(() {
+          _isProcessing = false;
+          _pendingMessage = null;
+          selectedMessage = null;
+        });
+        _voiceMessageIdForSpeakerSelection = null;
+      }
+    });
+  }
+
+  PreferredSizeWidget _buildSelectionAppBar() {
+    return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        onPressed: _cancelSelection,
+        color: Colors.black,
+      ),
+      title: Text(
+        '${selectedMessageIds.length} selected',
+        style: const TextStyle(color: Colors.black),
+      ),
+      backgroundColor: Colors.white,
+      actions: [
+        if (selectedMessageIds.length == 1)
+          IconButton(
+            icon: const Icon(Icons.reply),
+            onPressed: () {
+              final message = _firestoreHandler.messages.firstWhere(
+                (m) => m['id'] == selectedMessageIds.first,
+              );
+              _setReplyToMessage(message);
+            },
+            color: Colors.black,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildReplyPreview() {
+    if (selectedMessage == null) return const SizedBox.shrink();
+
+    final replyText = _firestoreHandler.getReplyToText(selectedMessage!);
+    final isSpiral = selectedMessage?['type'] == 'spiral';
+    final color = isSpiral ? Colors.orange : Colors.blue;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        border: Border(left: BorderSide(color: color, width: 4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                isSpiral
+                    ? '🌀 Replying to Spiral Stage'
+                    : '💬 Replying to Message',
+                style: TextStyle(fontWeight: FontWeight.bold, color: color),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 20),
+                onPressed: () => setState(() => selectedMessage = null),
+                color: Colors.black,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 150),
+            child: SingleChildScrollView(
+              child: Text(
+                replyText,
+                style: const TextStyle(fontSize: 14, color: Colors.black87),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProcessingOverlay() {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black54,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[800]!),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _audioHandler.isRecording
+                    ? 'Processing your voice message...'
+                    : 'Processing your reflection...',
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (_isInitializing) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(
+                'Loading your reflections...',
+                style: TextStyle(color: theme.colorScheme.onSurface),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final voiceMessageNeedingSelection = _firestoreHandler.messages
+          .firstWhere(
+            (msg) =>
+                msg['ask_speaker_pick'] == true &&
+                msg['id'] != _voiceMessageIdForSpeakerSelection,
+            orElse: () => {},
+          );
+
+      if (voiceMessageNeedingSelection.isNotEmpty &&
+          voiceMessageNeedingSelection['speaker_stages'] != null) {
+        _voiceMessageIdForSpeakerSelection = voiceMessageNeedingSelection['id'];
+        _showSpeakerSelectionDialog(
+          voiceMessageNeedingSelection['id'],
+          voiceMessageNeedingSelection['speaker_stages'],
+        );
+      }
+    });
+
+    return Scaffold(
+      appBar:
+          _isSelecting
+              ? _buildSelectionAppBar()
+              : AppBar(
+                title: const Text("Reflect & Chat"),
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.show_chart),
+                    onPressed:
+                        () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder:
+                                (context) => const SpiralEvolutionChartScreen(),
+                          ),
+                        ),
+                  ),
+                ],
+              ),
+      body: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(color: theme.colorScheme.background),
+            child: Column(
+              children: [
+                _buildReplyPreview(),
+                Expanded(
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      // Handle scroll events if needed
+                      return false;
+                    },
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(12),
+                      reverse: true, // This makes the list build from bottom
+                      itemCount:
+                          _firestoreHandler.messages.length +
+                          (_pendingMessage != null ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        // Handle pending message (newest message comes first)
+                        if (_pendingMessage != null && index == 0) {
+                          return Column(
+                            children: [
+                              _messageBuilder.buildChatBubble(
+                                context,
+                                _pendingMessage!,
+                                _isSelecting,
+                                selectedMessageIds.contains(
+                                  _pendingMessage!['id'],
+                                ),
+                                _audioHandler,
+                                onLongPress:
+                                    () => _toggleMessageSelection(
+                                      _pendingMessage!['id'],
+                                    ),
+                                onTap:
+                                    () => _toggleMessageSelection(
+                                      _pendingMessage!['id'],
+                                    ),
+                              ),
+                              if (_isProcessing)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 8.0,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Processing...',
+                                        style: TextStyle(
+                                          color: theme.colorScheme.onSurface
+                                              .withOpacity(0.7),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          );
+                        }
+
+                        // Handle regular messages (in reverse order)
+                        final messageIndex =
+                            _pendingMessage != null ? index - 1 : index;
+                        final message =
+                            _firestoreHandler.messages.reversed
+                                .toList()[messageIndex];
+
+                        return _messageBuilder.buildChatBubble(
+                          context,
+                          message,
+                          _isSelecting,
+                          selectedMessageIds.contains(message['id']),
+                          _audioHandler,
+                          onLongPress:
+                              () => _toggleMessageSelection(message['id']),
+                          onTap: () => _toggleMessageSelection(message['id']),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(
+                    left: 12,
+                    right: 12,
+                    top: 10,
+                    bottom: 20,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _controller,
+                          decoration: InputDecoration(
+                            hintText:
+                                selectedMessage != null
+                                    ? "Replying..."
+                                    : "Type your reflection...",
+                            filled: true,
+                            fillColor: theme.colorScheme.surface,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(30),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                          ),
+                          minLines: 1,
+                          maxLines: 5,
+                          style: TextStyle(color: theme.colorScheme.onSurface),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: Icon(
+                          _audioHandler.isRecording
+                              ? Icons.stop_circle_outlined
+                              : Icons.mic,
+                          color:
+                              _audioHandler.isRecording
+                                  ? Colors.red
+                                  : theme.colorScheme.onSurface,
+                        ),
+                        onPressed: () async {
+                          if (_audioHandler.isRecording) {
+                            await _audioHandler.stopRecording();
+                            final now = DateTime.now();
+                            setState(() {
+                              _isProcessing = true;
+                              _pendingMessage = {
+                                'user': 'Voice message',
+                                'timestamp': now,
+                                'id': 'pending-${now.millisecondsSinceEpoch}',
+                                'is_voice': true,
+                                if (selectedMessage != null)
+                                  'reply_to_id': selectedMessage!['id'],
+                                if (selectedMessage != null)
+                                  'reply_to': _firestoreHandler.getReplyToText(
+                                    selectedMessage!,
+                                  ),
+                              };
+                            });
+
+                            await _firestoreHandler.processVoiceMessage(
+                              selectedMessage,
+                              setState,
+                            );
+                            setState(() {
+                              _isProcessing = false;
+                              _pendingMessage = null;
+                              selectedMessage = null;
+                            });
+                            _scrollToBottom();
+                          } else {
+                            await _audioHandler.startRecording();
+                            setState(() {});
+                          }
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.send),
+                        onPressed:
+                            _isProcessing
+                                ? null
+                                : () async {
+                                  if (_controller.text.trim().isEmpty) return;
+
+                                  final now = DateTime.now();
+                                  final pendingMsg = {
+                                    'user': _controller.text,
+                                    'timestamp': now,
+                                    'id':
+                                        'pending-${now.millisecondsSinceEpoch}',
+                                    if (selectedMessage != null)
+                                      'reply_to_id': selectedMessage!['id'],
+                                    if (selectedMessage != null)
+                                      'reply_to': _firestoreHandler
+                                          .getReplyToText(selectedMessage!),
+                                  };
+
+                                  setState(() {
+                                    _isProcessing = true;
+                                    _pendingMessage = pendingMsg;
+                                    _controller.clear();
+                                  });
+
+                                  await _firestoreHandler.sendEntry(
+                                    pendingMsg['user'],
+                                    selectedMessage,
+                                    setState,
+                                  );
+
+                                  setState(() {
+                                    _isProcessing = false;
+                                    _pendingMessage = null;
+                                    selectedMessage = null;
+                                  });
+                                  _scrollToBottom();
+                                },
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_isProcessing && _pendingMessage == null)
+            _buildProcessingOverlay(),
+        ],
+      ),
+    );
+  }
+}
+
+
+reflect_firestore_handler.dart(frontend/lib/components:)
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http_parser/http_parser.dart';
+import 'reflect_audio_handler.dart';
+
+class ReflectFirestoreHandler {
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
+  final ReflectAudioHandler audioHandler;
+  List<Map<String, dynamic>> messages = [];
+  String? lastStage;
+
+  ReflectFirestoreHandler({required this.audioHandler});
+
+  Future<void> initialize({required String userId}) async {
+    await _loadMessages(userId);
+    await _checkAndAddDailyTask(userId);
+    _addDateHeaders();
+  }
+
+  Future<void> _loadMessages(String userId) async {
+    final snapshot =
+        await firestore
+            .collection('users')
+            .doc(userId)
+            .collection('mergedMessages')
+            .orderBy('timestamp')
+            .get();
+
+    messages = snapshot.docs.map((doc) => doc.data()..['id'] = doc.id).toList();
+
+    for (final msg in messages.reversed) {
+      if (msg['type'] == 'spiral' && (msg['stage'] ?? '') != '') {
+        lastStage = msg['stage'];
+        break;
+      }
+    }
+  }
+
+  void _addDateHeaders() {
+    if (messages.isEmpty) return;
+
+    final Map<String, List<Map<String, dynamic>>> groupedMessages = {};
+    for (final message in messages) {
+      final date = DateFormat('yyyy-MM-dd').format(
+        message['timestamp'] is Timestamp
+            ? (message['timestamp'] as Timestamp).toDate()
+            : DateTime.parse(message['timestamp']),
+      );
+      groupedMessages.putIfAbsent(date, () => []).add(message);
+    }
+
+    final List<Map<String, dynamic>> newMessages = [];
+    groupedMessages.forEach((date, msgs) {
+      final firstMsg = msgs.first;
+      final timestamp =
+          firstMsg['timestamp'] is Timestamp
+              ? (firstMsg['timestamp'] as Timestamp).toDate()
+              : DateTime.parse(firstMsg['timestamp']);
+
+      newMessages.add({
+        'type': 'date-header',
+        'date': DateTime(timestamp.year, timestamp.month, timestamp.day),
+      });
+
+      newMessages.addAll(msgs);
+    });
+
+    messages = newMessages;
+  }
+
+  String getReplyToText(Map<String, dynamic> message) {
+    return message['question'] ??
+        message['response'] ??
+        message['user'] ??
+        message['message'] ??
+        "";
+  }
+
+  Future<void> _checkAndAddDailyTask(String userId) async {
+    final today = DateTime.now();
+    final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+    try {
+      final querySnapshot =
+          await firestore
+              .collection('users')
+              .doc(userId)
+              .collection('mergedMessages')
+              .where('type', isEqualTo: 'daily-task')
+              .where(
+                'timestamp',
+                isGreaterThanOrEqualTo: DateTime(
+                  today.year,
+                  today.month,
+                  today.day,
+                ),
+              )
+              .where(
+                'timestamp',
+                isLessThan: DateTime(today.year, today.month, today.day + 1),
+              )
+              .limit(1)
+              .get();
+
+      if (querySnapshot.docs.isEmpty) {
+        await _addDailyTaskMessage(userId);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error checking for daily task: $e');
+      }
+      final hasDailyTask = messages.any((msg) {
+        if (msg['type'] == 'daily-task') {
+          DateTime timestamp;
+          if (msg['timestamp'] is Timestamp) {
+            timestamp = (msg['timestamp'] as Timestamp).toDate();
+          } else if (msg['timestamp'] is String) {
+            timestamp = DateTime.parse(msg['timestamp']);
+          } else {
+            timestamp = msg['timestamp'];
+          }
+          return DateFormat('yyyy-MM-dd').format(timestamp) == todayStr;
+        }
+        return false;
+      });
+
+      if (!hasDailyTask) {
+        await _addDailyTaskMessage(userId);
+      }
+    }
+  }
+
+  // old useful code
+  Future<void> _addDailyTaskMessage(String userId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('http://192.168.31.94:5000/daily_task?user_id=$userId'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+
+        final taskMessage = {
+          'type': 'daily-task',
+          'message': data['task'] ?? 'Your daily reflection task',
+          'timestamp': today,
+          'task_id': data['timestamp'],
+          'completed': data['completed'] ?? false,
+        };
+
+        await _storeMessage(taskMessage);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error loading daily task: $e');
+      }
+    }
+  }
+
+  Future<void> _storeMessage(Map<String, dynamic> msg) async {
+    final docRef = await firestore
+        .collection('users')
+        .doc(FirebaseAuth.instance.currentUser!.uid)
+        .collection('mergedMessages')
+        .add(msg);
+    messages.add({...msg, 'id': docRef.id});
+  }
+
+  Future<void> sendEntry(
+    String entry,
+    Map<String, dynamic>? selectedMessage,
+    void Function(void Function()) setState,
+  ) async {
+    if (entry.trim().isEmpty) return;
+
+    final now = DateTime.now();
+    const url = "http://192.168.31.94:5000/merged";
+
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "text": entry,
+          "last_stage": lastStage ?? "",
+          "reply_to":
+              selectedMessage != null ? getReplyToText(selectedMessage) : "",
+          "is_spiral_reply":
+              selectedMessage != null && selectedMessage['type'] == 'spiral',
+          "user_id": FirebaseAuth.instance.currentUser!.uid,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final base = {
+          'user': entry,
+          'timestamp': now,
+          if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+          if (selectedMessage != null)
+            'reply_to': getReplyToText(selectedMessage),
+        };
+
+        if (data['mode'] == 'chat') {
+          final msg = {
+            ...base,
+            'type': 'chat',
+            'response': data['response'] ?? '',
+            'audio_url': data['audio_url'] ?? '',
+            if (data['streak'] != null) 'streak': data['streak'],
+            if (data['rewards'] != null) 'rewards': data['rewards'],
+            if (data['message_rewards'] != null)
+              'message_rewards': data['message_rewards'],
+          };
+          await _storeMessage(msg);
+        } else if (data['mode'] == 'spiral') {
+          final newStage = data['stage'] ?? '';
+          lastStage = newStage;
+
+          final msg = {
+            ...base,
+            'type': 'spiral',
+            'stage': newStage,
+            'question': data['question'] ?? '',
+            'evolution': data['evolution'] ?? '',
+            'growth': data['gamified']?['gamified_prompt'] ?? '',
+            'audio_url': data['audio_url'] ?? '',
+            'confidence': data['confidence'] ?? 0,
+            'reason': data['reason'] ?? '',
+            if (data['xp_gained'] != null) 'xp_gained': data['xp_gained'],
+            if (data['badges_earned'] != null)
+              'badges_earned': data['badges_earned'],
+            if (data['streak'] != null) 'streak': data['streak'],
+            if (data['streak_rewards'] != null)
+              'streak_rewards': data['streak_rewards'],
+            if (data['message_rewards'] != null)
+              'message_rewards': data['message_rewards'],
+            if (data['note'] != null) 'note': data['note'],
+          };
+          await _storeMessage(msg);
+        }
+        setState(() {});
+      }
+    } catch (e) {
+      messages.add({
+        'type': 'error',
+        'message': 'Error: ${e.toString()}',
+        'timestamp': DateTime.now(),
+      });
+      setState(() {});
+    }
+  }
+
+  Future<void> processVoiceMessage(
+    Map<String, dynamic>? selectedMessage,
+    void Function(void Function()) setState,
+  ) async {
+    try {
+      const uri = "http://192.168.31.94:5000/reflect_transcription";
+      final request = http.MultipartRequest('POST', Uri.parse(uri));
+
+      request.fields['last_stage'] = lastStage ?? '';
+      request.fields['reply_to'] =
+          selectedMessage != null ? getReplyToText(selectedMessage) : "";
+      request.fields['is_spiral_reply'] =
+          (selectedMessage != null && selectedMessage['type'] == 'spiral')
+              .toString();
+      request.fields['user_id'] = FirebaseAuth.instance.currentUser!.uid;
+
+      final audioFile = await http.MultipartFile.fromPath(
+        'audio',
+        await audioHandler.getCurrentRecordingPath(),
+        contentType: MediaType('audio', 'wav'),
+      );
+      request.files.add(audioFile);
+
+      final response = await request.send();
+      final responseBody = await response.stream.bytesToString();
+      final data = json.decode(responseBody);
+
+      if (response.statusCode == 200) {
+        final now = DateTime.now();
+        final msg = {
+          'user': '[Voice]',
+          'timestamp': now,
+          'audioPath': await audioHandler.getCurrentRecordingPath(),
+          'transcription': data['transcription'] ?? '',
+          'type': data['mode'],
+          if (selectedMessage != null) 'reply_to_id': selectedMessage['id'],
+          if (selectedMessage != null)
+            'reply_to': getReplyToText(selectedMessage),
+          'diarized': data['diarized'] ?? false,
+          'speaker_stages': data['speaker_stages'] ?? {},
+          'ask_speaker_pick': data['ask_speaker_pick'] ?? false,
+          if (data['streak'] != null) 'streak': data['streak'],
+          if (data['rewards'] != null) 'rewards': data['rewards'],
+          if (data['message_rewards'] != null)
+            'message_rewards': data['message_rewards'],
+        };
+
+        if (data['mode'] == 'chat') {
+          msg['response'] = data['response'] ?? '';
+          msg['audio_url'] = data['audio_url'] ?? '';
+          await _storeMessage(msg);
+          setState(() {});
+        } else if (data['ask_speaker_pick'] == true) {
+          await _storeMessage(msg);
+          setState(() {});
+        } else {
+          msg['stage'] = data['stage'] ?? '';
+          msg['question'] = data['question'] ?? '';
+          msg['growth'] = data['gamified']?['gamified_prompt'] ?? '';
+          msg['evolution'] = data['evolution'] ?? '';
+          msg['audio_url'] = data['audio_url'] ?? '';
+          lastStage = data['stage'];
+          await _storeMessage(msg);
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      messages.add({
+        'type': 'error',
+        'message': 'Voice processing failed: ${e.toString()}',
+        'timestamp': DateTime.now(),
+      });
+      setState(() {});
+    }
+  }
+
+  Future<void> finalizeSpeakerStage(
+    String messageId,
+    String speakerId,
+    Map<String, dynamic> speakerStages,
+    Map<String, dynamic>? selectedMessage,
+    void Function(void Function()) setState,
+  ) async {
+    try {
+      const url = "http://192.168.31.94:5000/finalize_stage";
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "speaker_id": speakerId,
+          "speaker_stages": speakerStages,
+          "last_stage": lastStage ?? "",
+          "reply_to":
+              selectedMessage != null ? getReplyToText(selectedMessage) : "",
+          "user_id": FirebaseAuth.instance.currentUser!.uid,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final now = DateTime.now();
+
+        final messageIndex = messages.indexWhere(
+          (msg) => msg['id'] == messageId,
+        );
+        if (messageIndex != -1) {
+          messages[messageIndex] = {
+            ...messages[messageIndex],
+            'type': 'spiral',
+            'stage': data['stage'],
+            'question': data['question'],
+            'growth': data['gamified']?['gamified_prompt'] ?? '',
+            'evolution': data['evolution'],
+            'audio_url': data['audio_url'],
+            'ask_speaker_pick': false,
+            if (data['xp_gained'] != null) 'xp_gained': data['xp_gained'],
+            if (data['badges_earned'] != null)
+              'badges_earned': data['badges_earned'],
+          };
+
+          lastStage = data['stage'];
+
+          await firestore
+              .collection('users')
+              .doc(FirebaseAuth.instance.currentUser!.uid)
+              .collection('mergedMessages')
+              .doc(messageId)
+              .update({
+                'type': 'spiral',
+                'stage': data['stage'],
+                'question': data['question'],
+                'growth': data['gamified']?['gamified_prompt'] ?? '',
+                'evolution': data['evolution'],
+                'audio_url': data['audio_url'],
+                'ask_speaker_pick': false,
+                if (data['xp_gained'] != null) 'xp_gained': data['xp_gained'],
+                if (data['badges_earned'] != null)
+                  'badges_earned': data['badges_earned'],
+              });
+
+          setState(() {});
+        }
+      }
+    } catch (e) {
+      messages.add({
+        'type': 'error',
+        'message': 'Error finalizing stage: ${e.toString()}',
+        'timestamp': DateTime.now(),
+      });
+      setState(() {});
+    }
+  }
+}
+
+
+reflect_message_builder.dart(frontend/lib/components:)
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'reflect_audio_handler.dart';
+
+class ReflectMessageBuilder {
+  Widget buildChatBubble(
+    BuildContext context,
+    Map<String, dynamic> msg,
+    bool isSelectingMode,
+    bool isSelected,
+    ReflectAudioHandler audioHandler, {
+    required VoidCallback onLongPress,
+    required VoidCallback onTap,
+  }) {
+    if (msg['type'] == 'date-header') {
+      return _buildDateHeader(context, msg['date']);
+    }
+
+    final timestamp = _parseTimestamp(msg['timestamp']);
+    final isCurrentPlaying =
+        audioHandler.currentlyPlayingUrl == msg['audioPath'] ||
+        audioHandler.currentlyPlayingUrl == msg['audio_url'];
+    final isReply = msg['reply_to_id'] != null;
+
+    return GestureDetector(
+      onLongPress: onLongPress,
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue[50] : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          children: [
+            if (isReply && msg['reply_to'] != null)
+              _buildReplyIndicator(context, msg['reply_to']),
+            if (msg['type'] == 'daily-task')
+              _buildDailyTaskMessage(context, msg, timestamp),
+            if (msg['user'] != null && msg['user'] != '[Voice]')
+              _buildUserMessage(context, msg, timestamp, isSelected, isReply),
+            if (msg['user'] == '[Voice]' &&
+                (msg['audioPath'] != null || msg['audio_url'] != null))
+              _buildVoiceMessage(
+                context,
+                msg,
+                timestamp,
+                audioHandler,
+                isCurrentPlaying,
+              ),
+            if (msg['type'] == 'chat')
+              _buildChatResponse(context, msg, timestamp, isSelected, isReply),
+            if (msg['type'] == 'spiral')
+              _buildSpiralMessage(context, msg, timestamp, isSelected, isReply),
+            if (msg['type'] == 'error') _buildErrorMessage(context, msg),
+          ],
+        ),
+      ),
+    );
+  }
+
+  DateTime _parseTimestamp(dynamic timestamp) {
+    if (timestamp is Timestamp) return timestamp.toDate();
+    if (timestamp is String) return DateTime.parse(timestamp);
+    return timestamp ?? DateTime.now();
+  }
+
+  Widget _buildDateHeader(BuildContext context, DateTime date) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: Theme.of(context).primaryColor.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          DateFormat('EEEE, MMMM d, yyyy').format(date),
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Theme.of(context).primaryColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReplyIndicator(BuildContext context, String replyText) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, top: 8, right: 16),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey[300]!),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 4,
+              height: 40,
+              color: Colors.grey,
+              margin: const EdgeInsets.only(right: 8),
+            ),
+            Expanded(
+              child: Text(
+                replyText,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.black54,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDailyTaskMessage(
+    BuildContext context,
+    Map<String, dynamic> msg,
+    DateTime timestamp,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.purple[100],
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "📝 Inner Compass",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.black,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  msg['message'] ?? '',
+                  style: const TextStyle(color: Colors.black87),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  DateFormat('hh:mm a').format(timestamp),
+                  style: TextStyle(fontSize: 10, color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUserMessage(
+    BuildContext context,
+    Map<String, dynamic> msg,
+    DateTime timestamp,
+    bool isSelected,
+    bool isReply,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 10,
+                  horizontal: 14,
+                ),
+                decoration: BoxDecoration(
+                  color:
+                      isSelected
+                          ? Colors.blue.withOpacity(0.5)
+                          : isReply
+                          ? Colors.blue.withOpacity(0.2)
+                          : Colors.blue.withOpacity(0.3),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(12),
+                    topRight: Radius.circular(12),
+                    bottomLeft: Radius.circular(12),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      msg['user'] ?? '',
+                      style: const TextStyle(color: Colors.black87),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  DateFormat('h:mm a').format(timestamp),
+                  style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVoiceMessage(
+    BuildContext context,
+    Map<String, dynamic> msg,
+    DateTime timestamp,
+    ReflectAudioHandler audioHandler,
+    bool isCurrentPlaying,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blueGrey[50],
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+                bottomLeft: Radius.circular(12),
+              ),
+              border: Border.all(color: Colors.blueGrey[100]!),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.mic, color: Colors.blueGrey[600], size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      "Voice Message",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueGrey[800],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (msg['transcription'] != null &&
+                    msg['transcription'].isNotEmpty)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      Text(
+                        "Transcription:",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blueGrey[800],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '"${msg['transcription']}"',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  icon: Icon(
+                    isCurrentPlaying && audioHandler.isPlaying
+                        ? Icons.stop
+                        : Icons.play_arrow,
+                    size: 20,
+                  ),
+                  label: Text(
+                    isCurrentPlaying && audioHandler.isPlaying
+                        ? 'Stop'
+                        : 'Reflect',
+                  ),
+                  onPressed:
+                      () => audioHandler.playAudio(
+                        msg['audio_url'] ?? msg['audioPath'],
+                      ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueGrey[100],
+                    foregroundColor: Colors.blueGrey[800],
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+                if (msg['ask_speaker_pick'] == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      "Please select which speaker is you",
+                      style: TextStyle(
+                        color: Colors.orange[800],
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    DateFormat('h:mm a').format(timestamp),
+                    style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChatResponse(
+    BuildContext context,
+    Map<String, dynamic> msg,
+    DateTime timestamp,
+    bool isSelected,
+    bool isReply,
+  ) {
+    final rewards = _buildRewardIndicator(msg);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+            decoration: BoxDecoration(
+              color:
+                  isSelected
+                      ? Colors.grey[300]!
+                      : isReply
+                      ? Colors.grey[100]!
+                      : Colors.grey[200]!,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+                bottomRight: Radius.circular(12),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  msg['response'] ?? '',
+                  style: const TextStyle(color: Colors.black87),
+                ),
+                if (rewards != null) ...[const SizedBox(height: 8), rewards],
+                const SizedBox(height: 4),
+                Text(
+                  DateFormat('hh:mm a').format(timestamp),
+                  style: TextStyle(fontSize: 10, color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSpiralMessage(
+    BuildContext context,
+    Map<String, dynamic> msg,
+    DateTime timestamp,
+    bool isSelected,
+    bool isReply,
+  ) {
+    final stage = msg['stage'] ?? 'Unknown';
+    final stageMeta = _getStageMeta(stage);
+    final gamified = msg['gamified'] ?? {};
+    final question = msg['question'] ?? '';
+    final evolution = msg['evolution'] ?? '';
+    final growthPrompt = gamified['gamified_prompt'] ?? '';
+    final xpGained = msg['xp_gained'] ?? 0;
+    final badgesEarned = msg['badges_earned'] ?? [];
+    final growth = msg['growth'] ?? '';
+    final rewards = _buildRewardIndicator(msg);
+
+    // Get color based on stage
+    final stageColor = _getStageColor(stage);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color:
+                  isSelected
+                      ? Colors.orange[200]!
+                      : isReply
+                      ? Colors.orange[50]!
+                      : Colors.orange[100]!,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomRight: Radius.circular(16),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Stage Name with Emoji
+                Text(
+                  "🌀 Stage: $stage",
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Stage Meta (Name and Emoji)
+                if (stageMeta != null)
+                  Text(
+                    "Badge: ${stageMeta['emoji']} ${stageMeta['name']}",
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: Colors.black87,
+                    ),
+                  ),
+                const SizedBox(height: 8),
+
+                // Evolution Message (if any) - Now with stage-specific color
+                if (evolution.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      evolution,
+                      style: TextStyle(
+                        color: stageColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+
+                // Badges Earned
+                if (badgesEarned.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "🏆 Badges Earned:",
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        ...badgesEarned.map(
+                          (badge) => Text(
+                            "• $badge",
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Deep Reflective Question
+                if (question.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          const TextSpan(
+                            text: "Mind Mirror 🧠🔍 : ",
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          TextSpan(
+                            text: question,
+                            style: const TextStyle(
+                              fontStyle: FontStyle.italic,
+                              fontWeight: FontWeight.normal,
+                            ),
+                          ),
+                        ],
+                      ),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+
+                // Growth Prompt (from gamified)
+                if (growthPrompt.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      "Mission: $growthPrompt",
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black87,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+
+                // Growth Message (direct from msg)
+                if (growth.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      "Mission: $growth",
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black87,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+
+                // XP Gained
+                if (xpGained > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      "✨ +$xpGained XP",
+                      style: const TextStyle(
+                        color: Colors.purple,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+
+                // Speaker Stages (if diarized)
+                if (msg['diarized'] == true && msg['speaker_stages'] != null)
+                  _buildSpeakerStages(
+                    Map<String, dynamic>.from(msg['speaker_stages']),
+                  ),
+
+                // Confidence and Note
+                if (msg['confidence'] != null && msg['confidence'] < 0.7)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      "Confidence: ${(msg['confidence'] * 100).toStringAsFixed(1)}%",
+                      style: TextStyle(color: Colors.blueGrey, fontSize: 12),
+                    ),
+                  ),
+                if (msg['note'] != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      msg['note'],
+                      style: TextStyle(
+                        color: Colors.blueGrey,
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+
+                if (rewards != null) ...[const SizedBox(height: 8), rewards],
+
+                // Timestamp
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    DateFormat('hh:mm a').format(timestamp),
+                    style: TextStyle(fontSize: 10, color: Colors.black54),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _getStageColor(String stage) {
+    switch (stage) {
+      case 'Beige':
+        return Colors.brown;
+      case 'Purple':
+        return Colors.purple;
+      case 'Red':
+        return Colors.red;
+      case 'Blue':
+        return Colors.blue;
+      case 'Orange':
+        return Colors.orange;
+      case 'Green':
+        return Colors.green;
+      case 'Yellow':
+        return Colors.yellow.shade700;
+      case 'Turquoise':
+        return Colors.teal;
+      default:
+        return Colors.green;
+    }
+  }
+
+  Map<String, dynamic>? _getStageMeta(String stage) {
+    const stageMeta = {
+      "Beige": {
+        "emoji": "🏕️",
+        "name": "Survival Basecamp",
+        "reward": "+5 XP (🌱 Survivalist)",
+      },
+      "Purple": {
+        "emoji": "🪄",
+        "name": "Tribe Mystic",
+        "reward": "+10 XP (🧙 Tribal Keeper)",
+      },
+      "Red": {
+        "emoji": "🔥",
+        "name": "Dragon's Lair",
+        "reward": "+15 XP (🐉 Force Master)",
+      },
+      "Blue": {
+        "emoji": "📜",
+        "name": "Order Temple",
+        "reward": "+20 XP (🛡️ Virtue Guardian)",
+      },
+      "Orange": {
+        "emoji": "🚀",
+        "name": "Achiever's Arena",
+        "reward": "+25 XP (🏆 Success Champion)",
+      },
+      "Green": {
+        "emoji": "🌀",
+        "name": "Harmony Nexus",
+        "reward": "+30 XP (🌍 Community Builder)",
+      },
+      "Yellow": {
+        "emoji": "🔄",
+        "name": "Flow Integrator",
+        "reward": "+35 XP (🌀 Complexity Dancer)",
+      },
+      "Turquoise": {
+        "emoji": "🌌",
+        "name": "Cosmic Weave",
+        "reward": "+40 XP (♾️ Holon Seer)",
+      },
+    };
+    return stageMeta[stage];
+  }
+
+  Widget _buildSpeakerStages(Map<String, dynamic> speakerStages) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        ...speakerStages.entries.map((entry) {
+          final speaker = entry.key;
+          final stage = entry.value['stage'] ?? 'Unknown';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(fontSize: 12),
+                children: [
+                  TextSpan(
+                    text: "$speaker: ",
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blueGrey[800],
+                    ),
+                  ),
+                  TextSpan(
+                    text: stage,
+                    style: TextStyle(color: Colors.blueGrey[600]),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ],
+    );
+  }
+
+  Widget _buildErrorMessage(BuildContext context, Map<String, dynamic> msg) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.8,
+          ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+            decoration: BoxDecoration(
+              color: Colors.red[100]!,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              "❌ ${msg['message'] ?? 'Error'}",
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget? _buildRewardIndicator(Map<String, dynamic> msg) {
+    final rewards = <Widget>[];
+
+    if (msg['streak'] != null) {
+      rewards.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.orange[100],
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            '🔥 ${msg['streak']} day streak',
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    // Only show XP if it's not already shown in the main message (for spiral messages)
+    if (msg['xp_gained'] != null && msg['type'] != 'spiral') {
+      rewards.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.purple[100],
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            '✨ +${msg['xp_gained']} XP',
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    if (rewards.isEmpty) return null;
+
+    return Wrap(spacing: 8, runSpacing: 4, children: rewards);
+  }
+}
+
+
+
+reflect_audio_handler.dart(frontend/lib/components:)
+import 'dart:io';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart' as record;
+import 'package:path/path.dart' as path;
+import 'package:http_parser/http_parser.dart';
+
+class ReflectAudioHandler {
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final record.AudioRecorder _recorder = record.AudioRecorder();
+
+  bool _isRecording = false;
+  bool _isPlaying = false;
+  String? _currentlyPlayingUrl;
+  String? _currentRecordingPath;
+
+  bool get isRecording => _isRecording;
+  bool get isPlaying => _isPlaying;
+  String? get currentlyPlayingUrl => _currentlyPlayingUrl;
+
+  void init({required void Function() onPlayerStateChanged}) {
+    _audioPlayer.onPlayerStateChanged.listen((_) => onPlayerStateChanged());
+  }
+
+  Future<void> dispose() async {
+    await _audioPlayer.dispose();
+    await _recorder.dispose();
+  }
+
+  Future<String> getCurrentRecordingPath() async {
+    return _currentRecordingPath ?? await _getTempFilePath();
+  }
+
+  Future<String> _getTempFilePath() async {
+    final dir = await getTemporaryDirectory();
+    _currentRecordingPath = path.join(dir.path, 'journal.wav');
+    return _currentRecordingPath!;
+  }
+
+  Future<void> _requestPermissions() async {
+    await [Permission.microphone, Permission.storage].request();
+  }
+
+  Future<void> startRecording() async {
+    await _requestPermissions();
+    final filePath = await _getTempFilePath();
+    final hasPermission = await _recorder.hasPermission();
+    if (!hasPermission) return;
+
+    _isRecording = true;
+    try {
+      await _recorder.start(
+        const record.RecordConfig(
+          encoder: record.AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
+        path: filePath,
+      );
+    } catch (e) {
+      _isRecording = false;
+      rethrow;
+    }
+  }
+
+  Future<void> stopRecording() async {
+    try {
+      final filePath = await _recorder.stop();
+      _isRecording = false;
+      if (filePath == null || !await File(filePath).exists()) {
+        throw Exception("Recording file not found");
+      }
+    } catch (e) {
+      _isRecording = false;
+      rethrow;
+    }
+  }
+
+  Future<void> playAudio(String? audioPath) async {
+    if (audioPath == null) return;
+
+    if (_isPlaying && _currentlyPlayingUrl == audioPath) {
+      await _audioPlayer.stop();
+      _isPlaying = false;
+      _currentlyPlayingUrl = null;
+      return;
+    }
+
+    if (_isPlaying) await _audioPlayer.stop();
+
+    _isPlaying = true;
+    _currentlyPlayingUrl = audioPath;
+
+    try {
+      if (audioPath.startsWith('http')) {
+        await _audioPlayer.play(UrlSource(audioPath));
+      } else {
+        await _audioPlayer.play(DeviceFileSource(audioPath));
+      }
+    } catch (e) {
+      _isPlaying = false;
+      _currentlyPlayingUrl = null;
+      rethrow;
+    }
+  }
+}
+
+reflect_gamification_handler.dart:
+// frontend/lib/components/reflect/reflect_gamification_handler.dart
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class ReflectGamificationHandler {
+  final FirebaseFirestore firestore = FirebaseFirestore.instance;
+
+  Map<String, dynamic> _userProgress = {
+    'xp': 0,
+    'level': 1,
+    'streak': 0,
+    'badges': [],
+    'messageCount': 0,
+    'lastActiveDate': null,
+  };
+
+  Future<void> initialize({required String userId}) async {
+    final doc = await firestore.collection('userProgress').doc(userId).get();
+    if (doc.exists) {
+      _userProgress = doc.data()!;
+    }
+  }
+
+  Future<void> updateProgress(Map<String, dynamic> updates) async {
+    final userId = FirebaseAuth.instance.currentUser!.uid;
+    await firestore.collection('userProgress').doc(userId).set(
+      updates,
+      SetOptions(merge: true),
+    );
+    _userProgress = {..._userProgress, ...updates};
+  }
+
+  Future<void> handleXpReward(int xp, String? badge) async {
+    final newXp = (_userProgress['xp'] ?? 0) + xp;
+    final newLevel = (newXp / 100).floor() + 1;
+
+    final updates = {
+      'xp': newXp,
+      'level': newLevel,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    };
+
+    if (badge != null) {
+      final badges = List<String>.from(_userProgress['badges'] ?? []);
+      if (!badges.contains(badge)) {
+        badges.add(badge);
+        updates['badges'] = badges;
+      }
+    }
+
+    await updateProgress(updates);
+  }
+
+  Future<void> checkDailyStreak() async {
+    final now = DateTime.now();
+    final lastActive = _userProgress['lastActiveDate']?.toDate();
+
+    if (lastActive == null ||
+        lastActive.isBefore(now.subtract(Duration(days: 1)))) {
+      // Reset streak if more than 1 day has passed
+      await updateProgress({
+        'streak': 1,
+        'lastActiveDate': now,
+      });
+    } else if (lastActive.day == now.day) {
+      // Already active today
+      return;
+    } else {
+      // Increment streak
+      final newStreak = (_userProgress['streak'] ?? 0) + 1;
+      await updateProgress({
+        'streak': newStreak,
+        'lastActiveDate': now,
+      });
+
+      // Check for streak rewards
+      if (newStreak == 3) {
+        await handleXpReward(15, '🔥 3-Day Streak');
+      } else if (newStreak == 7) {
+        await handleXpReward(30, '🌟 Weekly Explorer');
+      } else if (newStreak == 14) {
+        await handleXpReward(50, '🌙 Fortnight Champion');
+      } else if (newStreak == 30) {
+        await handleXpReward(100, '🌕 Monthly Master');
+      }
+    }
+  }
+
+  Future<void> incrementMessageCount() async {
+    final newCount = (_userProgress['messageCount'] ?? 0) + 1;
+    await updateProgress({'messageCount': newCount});
+
+    if (newCount >= 5) {
+      await handleXpReward(20, '💬 Chatterbox');
+    }
+  }
+
+  Map<String, dynamic> get progress => _userProgress;
+}
