@@ -1271,14 +1271,209 @@
 //     );
 //   }
 // // }
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+// import 'dart:convert';
+// import 'package:http/http.dart' as http;
+// import 'package:flutter/material.dart';
+// import 'package:firebase_core/firebase_core.dart';
+// import 'package:firebase_auth/firebase_auth.dart';
+// import 'firebase_options.dart';
+
+// // // Your screens
+// import 'screens/login_screen.dart';
+// import 'screens/register_screen.dart';
+// import 'screens/home_screen.dart';
+// import 'screens/merged_reflect_screen.dart';
+// import 'screens/user_guide_screen.dart';
+// import 'screens/spiral_evolution_chart.dart';
+// import 'screens/my_account_screen.dart';
+// import 'screens/settings_screen.dart';
+// import 'screens/welcome_screen.dart';
+// import 'screens/journey_guide_screen.dart';
+
+// final ValueNotifier<int> selectedBgIndex = ValueNotifier<int>(0);
+// final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier(
+//   ThemeMode.system,
+// );
+// final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// void main() async {
+//   WidgetsFlutterBinding.ensureInitialized();
+//   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+//   runApp(const MyApp());
+// }
+
+// class MyApp extends StatelessWidget {
+//   const MyApp({super.key});
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return ValueListenableBuilder<ThemeMode>(
+//       valueListenable: themeModeNotifier,
+//       builder: (context, mode, _) {
+//         return MaterialApp(
+//           debugShowCheckedModeBanner: false,
+//           title: 'RETVRN',
+//           navigatorKey: navigatorKey,
+//           themeMode: mode,
+//           theme: ThemeData(
+//             brightness: Brightness.light,
+//             primarySwatch: Colors.deepPurple,
+//             scaffoldBackgroundColor: Colors.white,
+//             useMaterial3: true,
+//           ),
+//           darkTheme: ThemeData(
+//             brightness: Brightness.dark,
+//             scaffoldBackgroundColor: const Color(0xFF121212),
+//             primaryColor: Colors.deepPurple,
+//             elevatedButtonTheme: ElevatedButtonThemeData(
+//               style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
+//             ),
+//             useMaterial3: true,
+//           ),
+//           home: const AuthGate(),
+//           routes: {
+//             '/welcome': (_) => const WelcomeScreen(),
+//             '/login': (_) => const LoginScreen(),
+//             '/register': (_) => const RegisterScreen(),
+//             '/home': (_) => const HomeScreen(),
+//             '/chat': (_) => const MergedReflectScreen(),
+//             '/guide': (_) => const UserGuideScreen(),
+//             '/journeyguide': (_) => const JourneyGuideScreen(),
+//             '/graph': (_) => const SpiralEvolutionChartScreen(),
+//             '/myaccount': (_) => const MyAccountScreen(),
+//             '/settings': (_) => const SettingsScreen(),
+//           },
+//         );
+//       },
+//     );
+//   }
+// }
+
+// class AuthGate extends StatelessWidget {
+//   const AuthGate({super.key});
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return StreamBuilder<User?>(
+//       stream: FirebaseAuth.instance.authStateChanges(),
+//       builder: (context, snapshot) {
+//         if (snapshot.connectionState == ConnectionState.waiting) {
+//           return const Scaffold(
+//             body: Center(child: CircularProgressIndicator()),
+//           );
+//         }
+//         if (snapshot.hasData) {
+//           return const HomeScreenWithServerMessage();
+//         }
+//         return const WelcomeScreen();
+//       },
+//     );
+//   }
+// }
+
+// class HomeScreenWithServerMessage extends StatefulWidget {
+//   const HomeScreenWithServerMessage({super.key});
+
+//   @override
+//   State<HomeScreenWithServerMessage> createState() =>
+//       _HomeScreenWithServerMessageState();
+// }
+
+// class _HomeScreenWithServerMessageState
+//     extends State<HomeScreenWithServerMessage> {
+//   final String serverUrl =
+//       "http://192.168.31.94:5000/notify"; // Replace with your backend IP
+//   String? title;
+//   String? body;
+//   bool loading = true;
+//   String? error;
+
+//   @override
+//   void initState() {
+//     super.initState();
+//     fetchServerMessage();
+//   }
+
+//   Future<void> fetchServerMessage() async {
+//     try {
+//       final response = await http.get(Uri.parse(serverUrl));
+//       if (response.statusCode == 200) {
+//         final data = json.decode(response.body);
+//         setState(() {
+//           title = data['title'] ?? 'No Title';
+//           body = data['body'] ?? 'No message body';
+//           loading = false;
+//         });
+//       } else {
+//         setState(() {
+//           error = 'Server error: ${response.statusCode}';
+//           loading = false;
+//         });
+//       }
+//     } catch (e) {
+//       setState(() {
+//         error = 'Failed to fetch message: $e';
+//         loading = false;
+//       });
+//     }
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       body:
+//           loading
+//               ? const Center(child: CircularProgressIndicator())
+//               : error != null
+//               ? Center(
+//                 child: Text(error!, style: const TextStyle(color: Colors.red)),
+//               )
+//               : Stack(
+//                 children: [
+//                   const HomeScreen(),
+//                   Positioned(
+//                     bottom: 20,
+//                     left: 20,
+//                     right: 20,
+//                     child: Container(
+//                       padding: const EdgeInsets.all(16),
+//                       decoration: BoxDecoration(
+//                         color: Colors.deepPurple,
+//                         borderRadius: BorderRadius.circular(12),
+//                       ),
+//                       child: Column(
+//                         mainAxisSize: MainAxisSize.min,
+//                         children: [
+//                           Text(
+//                             title ?? '',
+//                             style: const TextStyle(
+//                               color: Colors.white,
+//                               fontSize: 18,
+//                               fontWeight: FontWeight.bold,
+//                             ),
+//                           ),
+//                           const SizedBox(height: 8),
+//                           Text(
+//                             body ?? '',
+//                             style: const TextStyle(
+//                               color: Colors.white,
+//                               fontSize: 16,
+//                             ),
+//                           ),
+//                         ],
+//                       ),
+//                     ),
+//                   ),
+//                 ],
+//               ),
+//     );
+//   }
+// }
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 
-// // Your screens
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/home_screen.dart';
@@ -1330,7 +1525,7 @@ class MyApp extends StatelessWidget {
             ),
             useMaterial3: true,
           ),
-          home: const AuthGate(),
+          home: const AuthGate(), // 👈 this decides where to go
           routes: {
             '/welcome': (_) => const WelcomeScreen(),
             '/login': (_) => const LoginScreen(),
@@ -1349,6 +1544,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// This widget listens to Firebase auth state and routes accordingly
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
@@ -1357,115 +1553,19 @@ class AuthGate extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
+        // Still loading Firebase
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
+        // User is logged in
         if (snapshot.hasData) {
-          return const HomeScreenWithServerMessage();
+          return const HomeScreen();
         }
+        // No user logged in
         return const WelcomeScreen();
       },
-    );
-  }
-}
-
-class HomeScreenWithServerMessage extends StatefulWidget {
-  const HomeScreenWithServerMessage({super.key});
-
-  @override
-  State<HomeScreenWithServerMessage> createState() =>
-      _HomeScreenWithServerMessageState();
-}
-
-class _HomeScreenWithServerMessageState
-    extends State<HomeScreenWithServerMessage> {
-  final String serverUrl =
-      "http://192.168.31.94:5000/notify"; // Replace with your backend IP
-  String? title;
-  String? body;
-  bool loading = true;
-  String? error;
-
-  @override
-  void initState() {
-    super.initState();
-    fetchServerMessage();
-  }
-
-  Future<void> fetchServerMessage() async {
-    try {
-      final response = await http.get(Uri.parse(serverUrl));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          title = data['title'] ?? 'No Title';
-          body = data['body'] ?? 'No message body';
-          loading = false;
-        });
-      } else {
-        setState(() {
-          error = 'Server error: ${response.statusCode}';
-          loading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        error = 'Failed to fetch message: $e';
-        loading = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body:
-          loading
-              ? const Center(child: CircularProgressIndicator())
-              : error != null
-              ? Center(
-                child: Text(error!, style: const TextStyle(color: Colors.red)),
-              )
-              : Stack(
-                children: [
-                  const HomeScreen(),
-                  Positioned(
-                    bottom: 20,
-                    left: 20,
-                    right: 20,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.deepPurple,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            title ?? '',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            body ?? '',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
     );
   }
 }
