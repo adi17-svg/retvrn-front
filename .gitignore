@@ -32,6 +32,8 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+!frontend/app/google-services.json
+!frontend/firebase.json
 
 # Symbolication related
 app.*.symbols
