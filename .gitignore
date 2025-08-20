@@ -46,5 +46,5 @@ app.*.map.json
 
 # 🔒 Sensitive config files (should never be committed)
 firebase.json
-app/google-services.json
+android/app/google-services.json
 secrets/key.json
