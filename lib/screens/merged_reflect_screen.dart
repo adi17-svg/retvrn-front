@@ -13311,6 +13311,7 @@ class _MergedReflectScreenState extends State<MergedReflectScreen> {
     final theme = Theme.of(context);
 
     if (_isInitializing) {
+      // 🔹 Leave this loading Scaffold unchanged
       return Scaffold(
         body: Center(
           child: Column(
@@ -13348,6 +13349,7 @@ class _MergedReflectScreenState extends State<MergedReflectScreen> {
     });
 
     return Scaffold(
+      resizeToAvoidBottomInset: true, // 👈 makes Scaffold move up with keyboard
       appBar:
           _isSelecting
               ? _buildSelectionAppBar()
@@ -13367,236 +13369,247 @@ class _MergedReflectScreenState extends State<MergedReflectScreen> {
                   ),
                 ],
               ),
-      body: Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(color: theme.colorScheme.background),
-            child: Column(
-              children: [
-                _buildReplyPreview(),
-                Expanded(
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      return false;
-                    },
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(12),
-                      reverse: true,
-                      itemCount:
-                          _firestoreHandler.messages.length +
-                          (_pendingMessage != null ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (_pendingMessage != null && index == 0) {
-                          return Column(
-                            children: [
-                              _messageBuilder.buildChatBubble(
-                                context,
-                                _pendingMessage!,
-                                _isSelecting,
-                                selectedMessageIds.contains(
-                                  _pendingMessage!['id'],
-                                ),
-                                _audioHandler,
-                                onLongPress:
-                                    () => _toggleMessageSelection(
+
+      body: Scaffold(
+        resizeToAvoidBottomInset:
+            true, // 👈 lets content shift when keyboard opens
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Container(
+                color: theme.colorScheme.background,
+                child: Column(
+                  children: [
+                    _buildReplyPreview(),
+
+                    // 🔹 Messages list
+                    Expanded(
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (_) => false,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(12),
+                          reverse: true,
+                          itemCount:
+                              _firestoreHandler.messages.length +
+                              (_pendingMessage != null ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (_pendingMessage != null && index == 0) {
+                              return Column(
+                                children: [
+                                  _messageBuilder.buildChatBubble(
+                                    context,
+                                    _pendingMessage!,
+                                    _isSelecting,
+                                    selectedMessageIds.contains(
                                       _pendingMessage!['id'],
                                     ),
-                                onTap:
-                                    () => _toggleMessageSelection(
-                                      _pendingMessage!['id'],
+                                    _audioHandler,
+                                    onLongPress:
+                                        () => _toggleMessageSelection(
+                                          _pendingMessage!['id'],
+                                        ),
+                                    onTap:
+                                        () => _toggleMessageSelection(
+                                          _pendingMessage!['id'],
+                                        ),
+                                  ),
+                                  if (_isProcessing)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8.0,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Processing...',
+                                            style: TextStyle(
+                                              color: theme.colorScheme.onSurface
+                                                  .withOpacity(0.7),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                              ),
-                              if (_isProcessing)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 8.0,
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        'Processing...',
-                                        style: TextStyle(
-                                          color: theme.colorScheme.onSurface
-                                              .withOpacity(0.7),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          );
-                        }
+                                ],
+                              );
+                            }
 
-                        final messageIndex =
-                            _pendingMessage != null ? index - 1 : index;
-                        final message =
-                            _firestoreHandler.messages.reversed
-                                .toList()[messageIndex];
+                            final messageIndex =
+                                _pendingMessage != null ? index - 1 : index;
+                            final message =
+                                _firestoreHandler.messages.reversed
+                                    .toList()[messageIndex];
 
-                        return _messageBuilder.buildChatBubble(
-                          context,
-                          message,
-                          _isSelecting,
-                          selectedMessageIds.contains(message['id']),
-                          _audioHandler,
-                          onLongPress:
-                              () => _toggleMessageSelection(message['id']),
-                          onTap: () => _toggleMessageSelection(message['id']),
-                        );
-                      },
+                            return _messageBuilder.buildChatBubble(
+                              context,
+                              message,
+                              _isSelecting,
+                              selectedMessageIds.contains(message['id']),
+                              _audioHandler,
+                              onLongPress:
+                                  () => _toggleMessageSelection(message['id']),
+                              onTap:
+                                  () => _toggleMessageSelection(message['id']),
+                            );
+                          },
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(
-                    left: 12,
-                    right: 12,
-                    top: 10,
-                    bottom: 20,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          decoration: InputDecoration(
-                            hintText:
-                                selectedMessage != null
-                                    ? "Replying..."
-                                    : "Type your reflection...",
-                            filled: true,
-                            fillColor: theme.colorScheme.surface,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(30),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
+
+                    // 🔹 Input bar
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _controller,
+                              decoration: InputDecoration(
+                                hintText:
+                                    selectedMessage != null
+                                        ? "Replying..."
+                                        : "Type your reflection...",
+                                filled: true,
+                                fillColor: theme.colorScheme.surface,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(30),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                              ),
+                              minLines: 1,
+                              maxLines: 5,
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurface,
+                              ),
                             ),
                           ),
-                          minLines: 1,
-                          maxLines: 5,
-                          style: TextStyle(color: theme.colorScheme.onSurface),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(
-                          _audioHandler.isRecording
-                              ? Icons.stop_circle_outlined
-                              : Icons.mic,
-                          color:
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: Icon(
                               _audioHandler.isRecording
-                                  ? Colors.red
-                                  : theme.colorScheme.onSurface,
-                        ),
-                        onPressed: () async {
-                          if (_audioHandler.isRecording) {
-                            await _audioHandler.stopRecording();
-                            final now = DateTime.now();
-                            if (mounted) {
-                              setState(() {
-                                _isProcessing = true;
-                                _pendingMessage = {
-                                  'user': 'Voice message',
-                                  'timestamp': now,
-                                  'id': 'pending-${now.millisecondsSinceEpoch}',
-                                  'is_voice': true,
-                                  if (selectedMessage != null)
-                                    'reply_to_id': selectedMessage!['id'],
-                                  if (selectedMessage != null)
-                                    'reply_to': _firestoreHandler
-                                        .getReplyToText(selectedMessage!),
-                                };
-                              });
-                            }
+                                  ? Icons.stop_circle_outlined
+                                  : Icons.mic,
+                              color:
+                                  _audioHandler.isRecording
+                                      ? Colors.red
+                                      : theme.colorScheme.onSurface,
+                            ),
+                            onPressed: () async {
+                              if (_audioHandler.isRecording) {
+                                await _audioHandler.stopRecording();
+                                final now = DateTime.now();
+                                if (mounted) {
+                                  setState(() {
+                                    _isProcessing = true;
+                                    _pendingMessage = {
+                                      'user': 'Voice message',
+                                      'timestamp': now,
+                                      'id':
+                                          'pending-${now.millisecondsSinceEpoch}',
+                                      'is_voice': true,
+                                      if (selectedMessage != null)
+                                        'reply_to_id': selectedMessage!['id'],
+                                      if (selectedMessage != null)
+                                        'reply_to': _firestoreHandler
+                                            .getReplyToText(selectedMessage!),
+                                    };
+                                  });
+                                }
 
-                            await _firestoreHandler.processVoiceMessage(
-                              selectedMessage,
-                              setState,
-                            );
-                            if (mounted) {
-                              setState(() {
-                                _isProcessing = false;
-                                _pendingMessage = null;
-                                selectedMessage = null;
-                              });
-                            }
-                            _scrollToBottom();
-                          } else {
-                            await _audioHandler.startRecording();
-                            if (mounted) {
-                              setState(() {});
-                            }
-                          }
-                        },
+                                await _firestoreHandler.processVoiceMessage(
+                                  selectedMessage,
+                                  setState,
+                                );
+                                if (mounted) {
+                                  setState(() {
+                                    _isProcessing = false;
+                                    _pendingMessage = null;
+                                    selectedMessage = null;
+                                  });
+                                }
+                                _scrollToBottom();
+                              } else {
+                                await _audioHandler.startRecording();
+                                if (mounted) {
+                                  setState(() {});
+                                }
+                              }
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.send),
+                            onPressed:
+                                _isProcessing
+                                    ? null
+                                    : () async {
+                                      if (_controller.text.trim().isEmpty)
+                                        return;
+
+                                      final now = DateTime.now();
+                                      final pendingMsg = {
+                                        'user': _controller.text,
+                                        'timestamp': now,
+                                        'id':
+                                            'pending-${now.millisecondsSinceEpoch}',
+                                        if (selectedMessage != null)
+                                          'reply_to_id': selectedMessage!['id'],
+                                        if (selectedMessage != null)
+                                          'reply_to': _firestoreHandler
+                                              .getReplyToText(selectedMessage!),
+                                      };
+
+                                      if (mounted) {
+                                        setState(() {
+                                          _isProcessing = true;
+                                          _pendingMessage = pendingMsg;
+                                          _controller.clear();
+                                        });
+                                      }
+
+                                      await _firestoreHandler.sendEntry(
+                                        pendingMsg['user'],
+                                        selectedMessage,
+                                        setState,
+                                      );
+
+                                      if (mounted) {
+                                        setState(() {
+                                          _isProcessing = false;
+                                          _pendingMessage = null;
+                                          selectedMessage = null;
+                                        });
+                                      }
+                                      _scrollToBottom();
+                                    },
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ],
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.send),
-                        onPressed:
-                            _isProcessing
-                                ? null
-                                : () async {
-                                  if (_controller.text.trim().isEmpty) return;
-
-                                  final now = DateTime.now();
-                                  final pendingMsg = {
-                                    'user': _controller.text,
-                                    'timestamp': now,
-                                    'id':
-                                        'pending-${now.millisecondsSinceEpoch}',
-                                    if (selectedMessage != null)
-                                      'reply_to_id': selectedMessage!['id'],
-                                    if (selectedMessage != null)
-                                      'reply_to': _firestoreHandler
-                                          .getReplyToText(selectedMessage!),
-                                  };
-
-                                  if (mounted) {
-                                    setState(() {
-                                      _isProcessing = true;
-                                      _pendingMessage = pendingMsg;
-                                      _controller.clear();
-                                    });
-                                  }
-
-                                  await _firestoreHandler.sendEntry(
-                                    pendingMsg['user'],
-                                    selectedMessage,
-                                    setState,
-                                  );
-
-                                  if (mounted) {
-                                    setState(() {
-                                      _isProcessing = false;
-                                      _pendingMessage = null;
-                                      selectedMessage = null;
-                                    });
-                                  }
-                                  _scrollToBottom();
-                                },
-                        color: theme.colorScheme.onSurface,
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+
+              if (_isProcessing && _pendingMessage == null)
+                _buildProcessingOverlay(),
+            ],
           ),
-          if (_isProcessing && _pendingMessage == null)
-            _buildProcessingOverlay(),
-        ],
+        ),
       ),
     );
   }
