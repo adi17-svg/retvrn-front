@@ -51,23 +51,28 @@
 	<string>This app requires access to the camera for recording videos.</string>
 
 	<!-- Notifications -->
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
-	<key>FirebaseAppDelegateProxyEnabled</key>
-	<false/>
+<key>UIBackgroundModes</key>
+<array>
+  <string>remote-notification</string>
+</array>
+
+<key>FirebaseAppDelegateProxyEnabled</key>
+<true/>
+
+<key>NSUserNotificationUsageDescription</key>
+<string>This app requires permission to send you notifications.</string>
+
 
 	<!-- Google Sign-In -->
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>com.googleusercontent.apps.YOUR_CLIENT_ID_REVERSED</string>
-			</array>
-		</dict>
-	</array>
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleURLSchemes</key>
+    <array>
+      <string>com.googleusercontent.apps.426353755118-uhqu5h91e33fc8mg7fqicqmodq7nih1h</string>
+    </array>
+  </dict>
+</array>
 
 	<!-- Encryption Declaration -->
 	<key>ITSAppUsesNonExemptEncryption</key>
